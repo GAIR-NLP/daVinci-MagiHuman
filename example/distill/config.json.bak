@@ -1,0 +1,17 @@
+{
+  "engine_config": {
+    "load": "/path/to/checkpoints/distill",
+    "distill": true,
+    "cp_size": 1
+  },
+  "evaluation_config": {
+    "cfg_number": 1,
+    "num_inference_steps": 8,
+    "audio_model_path": "/path/to/checkpoints/stable-audio-open-1.0",
+    "txt_model_path": "/path/to/checkpoints/t5/t5gemma-9b-9b-ul2",
+    "vae_model_path": "/path/to/checkpoints/wan_vae/Wan2.2-TI2V-5B",
+    "use_turbo_vae": true,
+    "student_config_path": "/path/to/checkpoints/turbo_vae/TurboV3-Wan22-TinyShallow_7_7.json",
+    "student_ckpt_path": "/path/to/checkpoints/turbo_vae/checkpoint-340000.ckpt"
+  }
+}
