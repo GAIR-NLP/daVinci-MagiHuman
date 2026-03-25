@@ -35,13 +35,11 @@ def get_world_size():
 
 def get_device(local_rank=None):
     backend = torch.distributed.get_backend()
-    if backend == "nccl":
+    if backend in ("nccl", "gloo"):
         if local_rank is None:
             device = torch.device("cuda")
         else:
             device = torch.device(f"cuda:{local_rank}")
-    elif backend == "gloo":
-        device = torch.device("cpu")
     else:
         raise RuntimeError
     return device

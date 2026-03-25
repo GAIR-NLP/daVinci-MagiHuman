@@ -2,7 +2,8 @@
   "engine_config": {
     "load": "/path/to/checkpoints/distill",
     "distill": true,
-    "cp_size": 1
+    "cp_size": 1,
+    "distributed_backend": "gloo"
   },
   "evaluation_config": {
     "cfg_number": 1,
