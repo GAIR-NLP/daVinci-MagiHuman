@@ -13,7 +13,13 @@
 # limitations under the License.
 
 import argparse
+import os
 import sys
+
+# When launched via `torchrun path/to/entry.py`, only the script's directory is
+# prepended to sys.path.  Explicitly insert the project root so that the
+# `inference` package is always importable regardless of how PYTHONPATH is set.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from inference.common import parse_config
 from inference.infra import initialize_infra
