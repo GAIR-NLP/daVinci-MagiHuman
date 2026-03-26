@@ -19,15 +19,18 @@ conda activate davinci
 export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 export NCCL_ALGO="${NCCL_ALGO:-^NVLS}"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
-export SERVER_PORT="${SERVER_PORT:-8765}"
 
-echo "[run_server] Starting server on port ${SERVER_PORT} ..."
+PORT="${SERVER_PORT:-8765}"
+
+echo "[run_server] Starting server on port ${PORT} ..."
 echo "[run_server] Config: ${CONFIG_PATH:-example/base/config.json}"
 echo "[run_server] Stop with Ctrl-C or kill the process."
 
 torchrun \
   --nnodes=1 --node_rank=0 --nproc_per_node=1 \
   --rdzv-backend=c10d --rdzv-endpoint=localhost:29500 \
-  inference/pipeline/server.py \
+  inference/pipeline/entry.py \
   --config-load-path "${CONFIG_PATH:-example/base/config.json}" \
+  --serve \
+  --port "${PORT}" \
   2>&1 | tee "log_server_$(date '+%Y%m%d_%H%M%S').log"

@@ -13,8 +13,13 @@
 # limitations under the License.
 
 import argparse
+import json
 import os
+import queue
 import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # When launched via `torchrun path/to/entry.py`, only the script's directory is
 # prepended to sys.path.  Explicitly insert the project root so that the
@@ -32,7 +37,92 @@ except ImportError:
     # Keep compatibility when entry.py is executed as a script path.
     from inference.pipeline import MagiPipeline
 
+# ---------------------------------------------------------------------------
+# Persistent server (used only when --serve is passed)
+# ---------------------------------------------------------------------------
+_request_queue: queue.Queue = queue.Queue()
+_result_store: dict = {}
 
+_SERVE_KWARGS = frozenset({
+    "seed", "seconds",
+    "br_width", "br_height",
+    "sr_width", "sr_height",
+    "output_width", "output_height",
+    "upsample_mode",
+})
+
+
+class _Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):  # suppress per-request access logs
+        pass
+
+    def do_GET(self):
+        if self.path == "/healthz":
+            self._json(200, {"status": "ok"})
+        else:
+            self._json(404, {"error": "not found"})
+
+    def do_POST(self):
+        if self.path != "/generate":
+            self._json(404, {"error": "not found"})
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            req = json.loads(self.rfile.read(length))
+        except Exception as exc:
+            self._json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        if "prompt" not in req or "image_path" not in req:
+            self._json(400, {"error": "prompt and image_path are required"})
+            return
+
+        req_id = f"{time.time():.6f}"
+        done = threading.Event()
+        _request_queue.put((req_id, req, done))
+        done.wait(timeout=7200)  # wait up to 2 hours for inference
+        result = _result_store.pop(req_id, {"error": "timeout"})
+        self._json(200 if "output_path" in result else 500, result)
+
+    def _json(self, code: int, body: dict):
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", len(data))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+def _run_server_loop(pipeline: "MagiPipeline", port: int):
+    """Start HTTP listener in a daemon thread, then process requests on the main thread."""
+    srv = HTTPServer(("localhost", port), _Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    print_rank_0(f"[Server] Listening on http://localhost:{port}  (Ctrl-C to stop)")
+
+    while True:
+        try:
+            req_id, req, done = _request_queue.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        try:
+            t0 = time.time()
+            out = pipeline.run_offline(
+                prompt=req["prompt"],
+                image=req["image_path"],
+                audio=req.get("audio_path"),
+                save_path_prefix=req.get("output_path", f"output_{req_id}"),
+                **{k: v for k, v in req.items() if k in _SERVE_KWARGS},
+            )
+            _result_store[req_id] = {"output_path": out, "elapsed": round(time.time() - t0, 1)}
+        except Exception as exc:
+            print_rank_0(f"[Server] inference error: {exc}")
+            _result_store[req_id] = {"error": str(exc)}
+        finally:
+            done.set()
+
+
+# ---------------------------------------------------------------------------
+# CLI argument parsing
+# ---------------------------------------------------------------------------
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run DiT pipeline with unified offline entry.")
     parser.add_argument("--prompt", type=str)
@@ -54,15 +144,28 @@ def parse_arguments():
     parser.add_argument("--output_width", type=int)
     parser.add_argument("--output_height", type=int)
     parser.add_argument("--upsample_mode", type=str)
+
+    # Persistent server mode
+    parser.add_argument("--serve", action="store_true", help="Start HTTP inference server (keeps model in GPU memory).")
+    parser.add_argument("--port", type=int, default=8765, help="HTTP port for --serve mode (default: 8765).")
+
     args, _ = parser.parse_known_args()
     return args
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main():
     args = parse_arguments()
     config = parse_config()
     model = get_dit(config.arch_config, config.engine_config)
     pipeline = MagiPipeline(model, config.evaluation_config)
+
+    if args.serve:
+        _run_server_loop(pipeline, args.port)
+        return  # unreachable; loop runs until Ctrl-C
+
     save_path_prefix = args.save_path_prefix or args.output_path
     if not save_path_prefix:
         print_rank_0("Error: --save_path_prefix (or --output_path) is required.")
