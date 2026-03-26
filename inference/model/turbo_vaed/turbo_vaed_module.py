@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -349,50 +349,6 @@ class TurboVAEDResnetBlock3d(nn.Module):
             inputs = self.conv_shortcut(inputs)
 
         hidden_states = hidden_states + inputs
-        return hidden_states
-
-
-class TurboVAEDUpsampler3d(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        stride: Union[int, Tuple[int, int, int]] = 1,
-        is_causal: bool = True,
-        upscale_factor: int = 1,
-        padding_mode: str = "zeros",
-    ) -> None:
-        super().__init__()
-
-        self.stride = stride if isinstance(stride, tuple) else (stride, stride, stride)
-        self.upscale_factor = upscale_factor
-
-        out_channels = (in_channels * stride[0] * stride[1] * stride[2]) // upscale_factor
-
-        self.conv = TurboVAEDCausalConv3d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=3,
-            stride=1,
-            is_causal=is_causal,
-            padding_mode=padding_mode,
-        )
-
-    @torch.compile
-    def forward(self, hidden_states: torch.Tensor, is_first_chunk: bool = True) -> torch.Tensor:
-        batch_size, num_channels, num_frames, height, width = hidden_states.shape
-
-        hidden_states = self.conv(hidden_states)
-
-        # because the former has better performance on cuda kernels.
-        s_t, s_h, s_w = self.stride
-        hidden_states = hidden_states.reshape(batch_size, -1, s_t, s_h, s_w, num_frames, height, width)
-        hidden_states = hidden_states.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
-        hidden_states = hidden_states.reshape(batch_size, -1, num_frames * s_t, height * s_h, width * s_w)
-
-        # slice the first chunk
-        if is_first_chunk:
-            hidden_states = hidden_states[:, :, self.stride[0] - 1 :]  # NOTE: extra handling for the first frame
-
         return hidden_states
 
 
@@ -819,10 +775,6 @@ class TurboVAED(ModelMixin, ConfigMixin):
         spatial_compression_ratio: int = 16,
         temporal_compression_ratio: int = 4,
         use_unpatchify: bool = False,
-        # below are for training, keep for compatibility
-        aligned_feature_projection_mode: Optional[str] = None,
-        aligned_feature_projection_dim: Optional[List[Tuple[int, int]]] = None,
-        aligned_blks_indices: Optional[List[int]] = None,
     ):
         super().__init__()
 
@@ -1033,7 +985,7 @@ class TurboVAED(ModelMixin, ConfigMixin):
         if num_padding_frames > 0:
             out = out[:, :, : -num_padding_frames * self.temporal_compression_ratio]
 
-        return out.to(z_device) if output_offload else out
+        return out
 
     def decode(self, z: torch.Tensor, output_offload: bool = False):
         return self._sliding_window_decode(z, output_offload=output_offload)

@@ -10,7 +10,7 @@ def get_turbo_vaed(config_path, ckpt_path, device="cuda", weight_dtype=torch.flo
     student = TurboVAED.from_config(config)
 
     ckpt = torch.load(ckpt_path, map_location="cpu")
-    assert "ema_state_dict" in ckpt, "ckpt must contain ema_state_dict or state_dict"
+    assert "ema_state_dict" in ckpt, "ckpt must contain ema_state_dict"
 
     state_dict = ckpt["ema_state_dict"]
     new_state_dict = {}
