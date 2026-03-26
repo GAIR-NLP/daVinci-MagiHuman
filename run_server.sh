@@ -9,7 +9,14 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve project root: works whether this script lives inside the repo or
+# has been copied to ~/ (or any other directory outside the project).
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${_SCRIPT_DIR}/inference/pipeline/entry.py" ]; then
+    PROJECT_ROOT="${_SCRIPT_DIR}"
+else
+    PROJECT_ROOT="${HOME}/daVinci-MagiHuman"
+fi
 cd "$PROJECT_ROOT"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
