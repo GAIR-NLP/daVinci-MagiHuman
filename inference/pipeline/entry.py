@@ -144,11 +144,6 @@ def parse_arguments():
     parser.add_argument("--output_width", type=int)
     parser.add_argument("--output_height", type=int)
     parser.add_argument("--upsample_mode", type=str)
-
-    # Persistent server mode
-    parser.add_argument("--serve", action="store_true", help="Start HTTP inference server (keeps model in GPU memory).")
-    parser.add_argument("--port", type=int, default=8765, help="HTTP port for --serve mode (default: 8765).")
-
     args, _ = parser.parse_known_args()
     return args
 
@@ -162,8 +157,11 @@ def main():
     model = get_dit(config.arch_config, config.engine_config)
     pipeline = MagiPipeline(model, config.evaluation_config)
 
-    if args.serve:
-        _run_server_loop(pipeline, args.port)
+    # Server mode: activated via env var MAGI_SERVE=1 to avoid CLI arg
+    # conflicts with pydantic-settings' own argument parser.
+    if os.environ.get("MAGI_SERVE") == "1":
+        port = int(os.environ.get("SERVER_PORT", "8765"))
+        _run_server_loop(pipeline, port)
         return  # unreachable; loop runs until Ctrl-C
 
     save_path_prefix = args.save_path_prefix or args.output_path

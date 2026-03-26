@@ -20,7 +20,10 @@ export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 export NCCL_ALGO="${NCCL_ALGO:-^NVLS}"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
-PORT="${SERVER_PORT:-8765}"
+# Signal server mode via env vars (avoids conflicts with pydantic-settings CLI parser)
+export MAGI_SERVE=1
+export SERVER_PORT="${SERVER_PORT:-8765}"
+PORT="${SERVER_PORT}"
 
 echo "[run_server] Starting server on port ${PORT} ..."
 echo "[run_server] Config: ${CONFIG_PATH:-example/base/config.json}"
@@ -31,6 +34,4 @@ torchrun \
   --rdzv-backend=c10d --rdzv-endpoint=localhost:29500 \
   inference/pipeline/entry.py \
   --config-load-path "${CONFIG_PATH:-example/base/config.json}" \
-  --serve \
-  --port "${PORT}" \
   2>&1 | tee "log_server_$(date '+%Y%m%d_%H%M%S').log"
