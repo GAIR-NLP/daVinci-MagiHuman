@@ -11,11 +11,13 @@
 
 cd ~/daVinci-MagiHuman
 
-PROMPT="${1:?Usage: run_custom.sh <prompt> <image_path> [br_width] [br_height] [seconds]}"
+PROMPT="${1:?Usage: run_custom.sh <prompt> <image_path> [br_width] [br_height] [seconds] [sr_width] [sr_height]}"
 IMAGE="${2:?image_path required}"
-BR_W="${3:-448}"
-BR_H="${4:-256}"
-SECS="${5:-5}"
+BR_W="${3:-256}"
+BR_H="${4:-448}"
+SECS="${5:-10}"
+SR_W="${6:-512}"
+SR_H="${7:-896}"
 PORT="${SERVER_PORT:-8765}"
 OUT="output_$(date '+%Y%m%d_%H%M%S')"
 
@@ -35,6 +37,7 @@ except Exception:
 
   PROMPT="$PROMPT" IMAGE="$IMAGE" \
   BR_W="$BR_W" BR_H="$BR_H" SECS="$SECS" \
+  SR_W="$SR_W" SR_H="$SR_H" \
   OUT="$OUT" PORT="$PORT" \
   python3 <<'PYEOF'
 import json, os, sys, time, urllib.request
@@ -45,6 +48,8 @@ req = {
     "br_width":   int(os.environ["BR_W"]),
     "br_height":  int(os.environ["BR_H"]),
     "seconds":    int(os.environ["SECS"]),
+    "sr_width":   int(os.environ["SR_W"]),
+    "sr_height":  int(os.environ["SR_H"]),
     "output_path": os.environ["OUT"],
 }
 data = json.dumps(req).encode()
@@ -92,11 +97,13 @@ export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
 torchrun --nnodes=1 --node_rank=0 --nproc_per_node=1 \
   --rdzv-backend=c10d --rdzv-endpoint=localhost:6009 \
   inference/pipeline/entry.py \
-  --config-load-path example/base/config.json \
+  --config-load-path example/sr_540p/config.json \
   --prompt "$PROMPT" \
   --image_path "$IMAGE" \
   --br_width "$BR_W" \
   --br_height "$BR_H" \
   --seconds "$SECS" \
+  --sr_width "$SR_W" \
+  --sr_height "$SR_H" \
   --output_path "$OUT" \
   2>&1 | tee "log_$(date '+%Y%m%d_%H%M%S').log"
