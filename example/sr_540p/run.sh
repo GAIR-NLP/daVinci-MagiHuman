@@ -12,7 +12,7 @@ export NODE_RANK="${NODE_RANK:-0}"
 export GPUS_PER_NODE="${GPUS_PER_NODE:-1}"
 export WORLD_SIZE="$((GPUS_PER_NODE * NNODES))"
 
-export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 export NCCL_ALGO="${NCCL_ALGO:-^NVLS}"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 export CPU_OFFLOAD=true
