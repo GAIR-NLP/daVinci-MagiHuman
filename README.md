@@ -254,10 +254,10 @@ This project is released under the [Apache License 2.0](https://opensource.org/l
 ## 📖 Citation
 
 ```bibtex
-@misc{davinci-magihuman-2026,
-  title   = {Speed by Simplicity: A Single-Stream Architecture for Fast Audio-Video Generative Foundation Model},
-  author  = {SII-GAIR and Sand.ai},
-  year    = {2026},
-  url     = {https://github.com/GAIR-NLP/daVinci-MagiHuman}
+@article{davinci-magihuman-2026,
+  title={Speed by Simplicity: A Single-Stream Architecture for Fast Audio-Video Generative Foundation Model},
+  author={SII-GAIR and Sand. ai and Chern, Ethan and Teng, Hansi and Sun, Hanwen and Wang, Hao and Pan, Hong and Jia, Hongyu and Su, Jiadi and Li, Jin and Yu, Junjie and Liu, Lijie and Li, Lingzhi and Ye, Lyumanshan and Hu, Min and Wang, Qiangang and Qi, Quanwei and Chern, Steffi and Bu, Tao and Wang, Taoran and Xu, Teren and Zhang, Tianning and Mi, Tiantian and Xu, Weixian and Zhang, Wenqiang and Zhang, Wentai and Yi, Xianping and Cai, Xiaojie and Kang, Xiaoyang and Ma, Yan and Liu, Yixiu and Zhang, Yunbo and Huang, Yunpeng and Lin, Yutong and Tao, Zewei and Liu, Zhaoliang and Zhang, Zheng and Cen, Zhiyao and Yu, Zhixuan and Wang, Zhongshu and Hu, Zhulin and Zhou, Zijin and Guo, Zinan and Cao, Yue and Liu, Pengfei},
+  journal={arXiv preprint arXiv:2603.21986},
+  year={2026}
 }
 ```
