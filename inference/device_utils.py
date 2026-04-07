@@ -37,19 +37,25 @@ def get_device(force: str | None = None) -> str:
 
     Priority: cuda > cpu.  Pass *force* to override (e.g. ``"mps"``).
 
-    NOTE: MPS is deliberately NOT auto-selected because PyTorch MPS kernels
-    produce subtle numerical errors in the DiT transformer that compound
-    across denoising steps, causing visual artifacts.  On Apple Silicon
-    with unified memory, CPU runs use the same physical RAM with no copy
-    penalty — only ~10x slower compute.  Use ``force="mps"`` to opt-in
-    for components known to be MPS-safe (e.g. VAE decode).
+    Priority: cuda > cpu (with MPS acceleration for attention).
+
+    MPS has a bug where chaining multiple operations in the DiT transformer
+    produces corrupted results. We keep the model on CPU and selectively
+    use MPS for the expensive SDPA attention computation only.
     """
     if force is not None:
         return force
     if torch.cuda.is_available():
         return f"cuda:{torch.cuda.current_device()}"
-    # MPS not auto-selected due to kernel bugs — see note above
+    # MPS not auto-selected — model stays on CPU, SDPA uses MPS selectively
     return "cpu"
+
+
+def get_mps_device() -> str | None:
+    """Return 'mps' if available, None otherwise. For selective MPS acceleration."""
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return None
 
 
 def is_mps(device: str | torch.device | None = None) -> bool:

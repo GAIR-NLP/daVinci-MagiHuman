@@ -664,6 +664,10 @@ class Attention(torch.nn.Module):
         modality_dispatcher: ModalityDispatcher,
         cp_split_sizes: List[int],
     ) -> torch.Tensor:
+        # Model runs on CPU. Selectively use MPS for the expensive SDPA step.
+        from inference.device_utils import get_mps_device
+        _mps = get_mps_device()
+
         hidden_states = self.pre_norm(hidden_states, modality_dispatcher=modality_dispatcher).to(get_dtype())
         qkv: torch.Tensor = self.linear_qkv(hidden_states, modality_dispatcher=modality_dispatcher).to(torch.float32)
 
@@ -684,12 +688,20 @@ class Attention(torch.nn.Module):
         q = apply_rotary_emb_torch(q, cos_emb, sin_emb)
         k = apply_rotary_emb_torch(k, cos_emb, sin_emb)
 
+        # Move q, k, v to MPS for the expensive SDPA computation
+        if _mps:
+            q, k, v = q.to(_mps), k.to(_mps), v.to(_mps)
+
         if self.config.use_local_attn:
             self_attn_out = flex_flash_attn_with_cp(
                 q, k, v, local_attn_handler.q_ranges, local_attn_handler.k_ranges, cp_split_sizes
             )
         else:
             self_attn_out = flash_attn_with_cp(q, k, v, cp_split_sizes)
+
+        # Move back to CPU for post-attention ops
+        if _mps:
+            self_attn_out = self_attn_out.cpu()
         self_attn_out = ModalityDispatcher.permute(self_attn_out, permute_mapping)
 
         if self.config.enable_attn_gating:
