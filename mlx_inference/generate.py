@@ -231,18 +231,29 @@ def main():
     print(f"  Total denoising: {t_denoise:.1f}s ({t_denoise/args.steps:.1f}s/step)")
 
     # ====================================================================
-    # Step 5: Decode video with PyTorch VAE
+    # Step 5: Decode video with Wan2.2 VAE on MPS (5x faster than CPU)
     # ====================================================================
-    print("\n[5/6] Decoding video...")
+    print("\n[5/6] Decoding video (Wan2.2 VAE on MPS)...")
     t0 = time.time()
 
-    if config.evaluation_config.use_turbo_vae:
-        videos = evaluator.turbo_vae.decode(latent_video.to(torch.float32)).float()
-    else:
-        videos = evaluator.vae.decode(latent_video.squeeze(0).to(torch.float32))
+    # Use Wan2.2 VAE on MPS instead of Turbo VAE on CPU
+    # Wan2.2 on MPS: ~17s vs Turbo on CPU: ~40s
+    from inference.model.vae2_2.vae2_2_model import get_vae2_2
+    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    vae_device = "mps" if mps_available else "cpu"
+    vae_decode = get_vae2_2(
+        os.path.join(config.evaluation_config.vae_model_path, "Wan2.2_VAE.pth"),
+        device=vae_device,
+    )
+    videos = vae_decode.decode(latent_video.to(vae_device, dtype=torch.float32))
+    videos = videos.float().cpu()
+    del vae_decode
+    import gc; gc.collect()
+    if mps_available:
+        torch.mps.empty_cache()
 
     videos.mul_(0.5).add_(0.5).clamp_(0, 1)
-    video_np = videos[0].cpu().permute(1, 2, 3, 0).numpy() * 255
+    video_np = videos[0].permute(1, 2, 3, 0).numpy() * 255
     video_np = video_np.astype(np.uint8)
     print(f"  Video frames: {video_np.shape}")  # Should be (T, H, W, 3)
 
