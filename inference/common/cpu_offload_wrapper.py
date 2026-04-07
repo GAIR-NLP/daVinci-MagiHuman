@@ -34,7 +34,7 @@ class CPUOffloadWrapper:
         if is_cpu_offload:
             self.model.to(cpu_device)
         else:
-            self.model.to(cuda_device)
+            self.model.to(gpu_device)
 
         # Whitelist non-compute methods that shouldn't trigger device hops (pass-through only; no device switch)
         object.__setattr__(
