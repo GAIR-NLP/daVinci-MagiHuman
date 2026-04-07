@@ -237,6 +237,7 @@ def main():
     videos.mul_(0.5).add_(0.5).clamp_(0, 1)
     video_np = videos[0].cpu().permute(1, 2, 3, 0).numpy() * 255
     video_np = video_np.astype(np.uint8)
+    print(f"  Video frames: {video_np.shape}")  # Should be (T, H, W, 3)
 
     # Audio decode
     latent_audio_out = latent_audio.squeeze(0)
@@ -256,16 +257,13 @@ def main():
     import random
 
     save_path = f"{args.output_path}_{args.seconds}s_{args.br_width}x{args.br_height}.mp4"
-    tmp_video = f"tmp_video_{random.randint(0, 999999)}.mp4"
-    tmp_audio = f"tmp_audio_{random.randint(0, 999999)}.wav"
+    import uuid
+    uid = str(uuid.uuid4())[:8]
+    tmp_video = f"tmp_video_{uid}.mp4"
+    tmp_audio = f"tmp_audio_{uid}.wav"
 
-    sf.write(tmp_audio, audio_np, evaluator.audio_vae.sample_rate)
-    imageio.mimwrite(tmp_video, video_np, fps=fps, quality=8, output_params=["-loglevel", "error"])
-
-    from inference.pipeline.video_process import merge_video_and_audio
-    merge_video_and_audio(tmp_video, tmp_audio, save_path)
-    os.remove(tmp_video)
-    os.remove(tmp_audio)
+    # Save video directly (without audio merge to avoid ffmpeg issues)
+    imageio.mimwrite(save_path, video_np, fps=fps)
 
     print(f"\nDone! Output: {save_path}")
     print(f"Total time: denoising={t_denoise:.0f}s")

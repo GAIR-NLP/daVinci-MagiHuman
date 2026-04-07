@@ -44,8 +44,10 @@ def apply_rotary_emb(
     assert ro_dim <= x.shape[-1]
 
     # Broadcast cos/sin: (..., d) -> (..., 1, 2*d)
-    cos = mx.repeat(cos[..., None, :], repeats=2, axis=-1)  # (..., 1, 2d)
-    sin = mx.repeat(sin[..., None, :], repeats=2, axis=-1)
+    # einops repeat '... d -> ... 1 (2 d)' = tile (not repeat-each)
+    # [a, b, c] -> [a, b, c, a, b, c]
+    cos = mx.concatenate([cos, cos], axis=-1)[..., None, :]  # (..., 1, 2d)
+    sin = mx.concatenate([sin, sin], axis=-1)[..., None, :]
 
     x_rot = x[..., :ro_dim]
     x_pass = x[..., ro_dim:]
