@@ -37,6 +37,7 @@ def parse_args():
     parser.add_argument("--br_height", type=int, default=256)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--steps", type=int, default=8)
+    parser.add_argument("--fp16", action="store_true", help="Use float16 weights (saves memory, same speed)")
     args, _ = parser.parse_known_args()
     return args
 
@@ -104,7 +105,10 @@ def main():
     from mlx_inference.loader.weight_converter import load_dit_weights
 
     mlx_model = DiTModel(ModelConfig())
-    flat = load_dit_weights("checkpoints/model_repo/distill", dtype=mx.float16, verbose=True)
+    # fp32 is same speed as fp16 on Apple Silicon (unified memory) and avoids
+    # precision artifacts. Use --fp16 to save memory if needed.
+    dit_dtype = mx.float16 if getattr(args, 'fp16', False) else mx.float32
+    flat = load_dit_weights("checkpoints/model_repo/distill", dtype=dit_dtype, verbose=True)
     mlx_model.load_weights(list(flat.items()))
     mx.eval(mlx_model.parameters())
     del flat
