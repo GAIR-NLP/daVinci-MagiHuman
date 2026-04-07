@@ -42,6 +42,27 @@ def get_dit(model_config, engine_config):
     device = get_device()
     model.to(device)
     model.eval()
+
+    # MPS hybrid optimization: move single-expert MLP + linear layers to MPS
+    # for ~4-5x speedup on those ops, while keeping the rest on CPU to avoid
+    # the MPS chained-operation bug.
+    from inference.device_utils import get_mps_device
+    mps = get_mps_device()
+    if mps and device == "cpu":
+        mps_layers = 0
+        for i, layer in enumerate(model.block.layers):
+            is_single_expert = layer.mlp.up_gate_proj.num_experts == 1
+            if is_single_expert:
+                # Move MLP to MPS
+                layer.mlp.to(mps)
+                # Move attention linears to MPS
+                layer.attention.linear_qkv.to(mps)
+                layer.attention.linear_proj.to(mps)
+                mps_layers += 1
+        if mps_layers > 0:
+            print_rank_0(f"MPS acceleration: {mps_layers}/{len(model.block.layers)} layers "
+                        f"(MLP + linears on MPS, norms + attention prep on CPU)")
+
     print_mem_info_rank_0("Load model successfully")
 
     gc.collect()

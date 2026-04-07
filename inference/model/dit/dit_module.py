@@ -664,12 +664,16 @@ class Attention(torch.nn.Module):
         modality_dispatcher: ModalityDispatcher,
         cp_split_sizes: List[int],
     ) -> torch.Tensor:
-        # Model runs on CPU. Selectively use MPS for the expensive SDPA step.
+        # Model runs on CPU. Selectively use MPS for expensive matmuls.
         from inference.device_utils import get_mps_device
-        _mps = get_mps_device()
+        _is_single = not hasattr(self.linear_qkv, 'num_experts') or self.linear_qkv.num_experts == 1
+        _mps = get_mps_device() if _is_single else None
 
         hidden_states = self.pre_norm(hidden_states, modality_dispatcher=modality_dispatcher).to(get_dtype())
-        qkv: torch.Tensor = self.linear_qkv(hidden_states, modality_dispatcher=modality_dispatcher).to(torch.float32)
+        if _mps:
+            qkv = self.linear_qkv(hidden_states.to(_mps)).to(torch.float32).cpu()
+        else:
+            qkv = self.linear_qkv(hidden_states, modality_dispatcher=modality_dispatcher).to(torch.float32)
 
         q, k, v, g = torch.split(qkv, [self.q_size, self.kv_size, self.kv_size, self.gating_size], dim=1)
         q = q.view(-1, self.config.num_heads_q, self.config.head_dim)
@@ -708,7 +712,10 @@ class Attention(torch.nn.Module):
             self_attn_out = self_attn_out * torch.sigmoid(g)
 
         self_attn_out = self_attn_out.view(-1, self.config.num_heads_q * self.config.head_dim).to(get_dtype())
-        out = self.linear_proj(self_attn_out, modality_dispatcher=modality_dispatcher)
+        if _mps:
+            out = self.linear_proj(self_attn_out.to(_mps)).cpu()
+        else:
+            out = self.linear_proj(self_attn_out, modality_dispatcher=modality_dispatcher)
         return out
 
 
@@ -839,6 +846,10 @@ class TransFormerLayer(torch.nn.Module):
             self.attn_post_norm = MultiModalityRMSNorm(config.hidden_size, num_modality=num_modality)
             self.mlp_post_norm = MultiModalityRMSNorm(config.hidden_size, num_modality=num_modality)
 
+    def _is_single_expert(self):
+        """Single-expert layers (4-35) can safely use MPS for MLP + linears."""
+        return not hasattr(self.mlp.up_gate_proj, 'num_experts') or self.mlp.up_gate_proj.num_experts == 1
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -864,7 +875,16 @@ class TransFormerLayer(torch.nn.Module):
             attn_out = self.attn_post_norm(attn_out, modality_dispatcher=modality_dispatcher)
         hidden_states = hidden_states + attn_out
 
-        mlp_out = self.mlp(hidden_states, modality_dispatcher)
+        # MPS acceleration for single-expert MLP (layers 4-35)
+        from inference.device_utils import get_mps_device
+        _mps = get_mps_device() if self._is_single_expert() else None
+        if _mps:
+            hidden_states_mps = hidden_states.to(_mps)
+            md_mps = ModalityDispatcher(modality_dispatcher.modality_mapping.to(_mps),
+                                         modality_dispatcher.num_modalities)
+            mlp_out = self.mlp(hidden_states_mps, md_mps).cpu()
+        else:
+            mlp_out = self.mlp(hidden_states, modality_dispatcher)
         if self.post_norm:
             mlp_out = self.mlp_post_norm(mlp_out, modality_dispatcher=modality_dispatcher)
         hidden_states = hidden_states + mlp_out
