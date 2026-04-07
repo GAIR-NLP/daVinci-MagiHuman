@@ -224,6 +224,9 @@ def main():
         step_time = time.time() - step_t0
         print(f"  Step {idx+1}/{args.steps}: {step_time:.1f}s")
 
+    # Final re-anchor: overwrite first frame with clean image latent
+    latent_video[:, :, :1] = br_image[:, :, :1]
+
     t_denoise = time.time() - t_denoise_start
     print(f"  Total denoising: {t_denoise:.1f}s ({t_denoise/args.steps:.1f}s/step)")
 
