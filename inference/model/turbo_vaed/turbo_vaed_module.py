@@ -26,8 +26,13 @@ __all__ = ["TurboVAED"]
 
 # Conditionally apply torch.compile — no-op on MPS/CPU
 def _maybe_compile(fn):
-    """Decorator replacement for @torch.compile that skips on MPS/CPU."""
-    if is_mps() or is_cpu():
+    """Decorator replacement for @torch.compile that skips when not on CUDA.
+
+    Checks MPS availability directly (not get_device()) because models
+    may be selectively placed on MPS even when get_device() returns 'cpu'.
+    torch.compile can hang or produce wrong results on MPS.
+    """
+    if not torch.cuda.is_available():
         return fn
     return torch.compile(fn)
 

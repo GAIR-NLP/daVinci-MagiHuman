@@ -26,8 +26,8 @@ __all__ = ["Wan2_2_VAE"]
 
 
 def _maybe_compile(fn):
-    """Decorator replacement for @torch.compile that skips on MPS/CPU."""
-    if is_mps() or is_cpu():
+    """Decorator replacement for @torch.compile that skips when not on CUDA."""
+    if not torch.cuda.is_available():
         return fn
     return torch.compile(fn)
 
