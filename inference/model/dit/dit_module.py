@@ -394,21 +394,25 @@ class NativeMoELinear(BaseLinear):
         modality_dispatcher: Optional[ModalityDispatcher] = None,
     ) -> torch.Tensor:
         output_dtype = input.dtype if output_dtype is None else output_dtype
+        compute_dtype = _get_compute_dtype()
 
+        # Dispatch on input device, per-expert matmul on weight device (may be MPS)
         input_list = modality_dispatcher.dispatch(input)  # type: ignore
         weight_chunked = self.weight.chunk(self.num_experts, dim=0)
-
-        if self.bias is not None:
-            bias_chunked = self.bias.chunk(self.num_experts, dim=0)
+        bias_chunked = self.bias.chunk(self.num_experts, dim=0) if self.bias is not None else [None] * self.num_experts
+        weight_device = self.weight.device
 
         for i in range(self.num_experts):
-            input_list[i] = _BF16ComputeLinear.apply(
-                input_list[i],
-                weight_chunked[i],
-                bias_chunked[i] if self.bias is not None else None,
-                output_dtype,
-                torch.bfloat16,
-            )
+            xi = input_list[i]
+            # Move to weight device for matmul (MPS acceleration)
+            if xi.device != weight_device:
+                xi = xi.to(weight_device)
+            xi = _BF16ComputeLinear.apply(xi, weight_chunked[i], bias_chunked[i], output_dtype, compute_dtype)
+            # Move back to input device for undispatch
+            if xi.device != input.device:
+                xi = xi.to(input.device)
+            input_list[i] = xi
+
         return modality_dispatcher.undispatch(*input_list)  # type: ignore
 
 

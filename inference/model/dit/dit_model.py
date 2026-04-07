@@ -57,10 +57,18 @@ def get_dit(model_config, engine_config):
             layer.attention.linear_qkv.to(mps)
             layer.attention.linear_proj.to(mps)
             if is_single_expert:
-                # Single-expert MLP: safe on MPS
+                # Single-expert MLP: fully safe on MPS
                 layer.mlp.to(mps)
                 mps_full += 1
             else:
+                # Multi-expert MLP: move weights to MPS, dispatch/undispatch on CPU
+                # NativeMoELinear.forward handles cross-device matmul automatically
+                layer.mlp.up_gate_proj.weight = torch.nn.Parameter(layer.mlp.up_gate_proj.weight.to(mps), requires_grad=False)
+                if layer.mlp.up_gate_proj.bias is not None:
+                    layer.mlp.up_gate_proj.bias = torch.nn.Parameter(layer.mlp.up_gate_proj.bias.to(mps), requires_grad=False)
+                layer.mlp.down_proj.weight = torch.nn.Parameter(layer.mlp.down_proj.weight.to(mps), requires_grad=False)
+                if layer.mlp.down_proj.bias is not None:
+                    layer.mlp.down_proj.bias = torch.nn.Parameter(layer.mlp.down_proj.bias.to(mps), requires_grad=False)
                 mps_linear += 1
         print_rank_0(f"MPS acceleration: {mps_full} layers full MPS (MLP+linears), "
                     f"{mps_linear} layers partial MPS (linears only). "
