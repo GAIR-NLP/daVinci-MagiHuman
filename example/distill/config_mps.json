@@ -5,7 +5,7 @@
     "cp_size": 1
   },
   "arch_config": {
-    "params_dtype": "torch.float16"
+    "params_dtype": "torch.float32"
   },
   "evaluation_config": {
     "cfg_number": 1,

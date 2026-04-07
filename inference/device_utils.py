@@ -73,14 +73,16 @@ def get_dtype(device: str | torch.device | None = None) -> torch.dtype:
     """Return the recommended compute dtype for *device*.
 
     - CUDA  -> bfloat16  (native on Ampere+)
-    - MPS   -> float16   (bfloat16 support is still partial)
+    - MPS   -> float32   (float16 causes precision artifacts in diffusion models;
+                          256GB unified memory makes fp32 feasible)
     - CPU   -> float32
     """
     device = device or get_device()
     if is_cuda(device):
         return torch.bfloat16
-    if is_mps(device):
-        return torch.float16
+    # MPS: use float32 to avoid color/shape artifacts from fp16 precision loss
+    # in multi-step diffusion denoising. With 256GB unified memory this is fine
+    # (~60GB model vs ~30GB in fp16).
     return torch.float32
 
 
@@ -88,9 +90,9 @@ def safe_dtype(dtype: torch.dtype, device: str | torch.device | None = None) -> 
     """Ensure *dtype* is supported on *device*.  Falls back gracefully."""
     device = device or get_device()
     if is_mps(device):
-        # MPS does not support fp8 or (fully) bfloat16
+        # MPS: use float32 for best precision; fall back from unsupported types
         if dtype in (torch.bfloat16,):
-            return torch.float16
+            return torch.float32
         # float8 types (torch.float8_e4m3fn etc.) are CUDA-only
         dtype_name = str(dtype)
         if "float8" in dtype_name:
