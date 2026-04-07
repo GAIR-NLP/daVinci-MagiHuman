@@ -866,7 +866,7 @@ class TurboVAED(ModelMixin, ConfigMixin):
                 -0.0667,
             ],
             dtype=torch.float32,
-            device=get_device(),
+            device="cpu",  # will be moved to target device by .to()
         )
         self.std = torch.tensor(
             [
@@ -920,7 +920,7 @@ class TurboVAED(ModelMixin, ConfigMixin):
                 0.7744,
             ],
             dtype=torch.float32,
-            device=get_device(),
+            device="cpu",  # will be moved to target device by .to()
         )
         self.scale = [self.mean, 1.0 / self.std]
 

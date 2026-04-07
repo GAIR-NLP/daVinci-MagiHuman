@@ -383,7 +383,12 @@ class BaseLinear(nn.Module):
         modality_dispatcher: Optional[ModalityDispatcher] = None,
     ) -> torch.Tensor:
         output_dtype = input.dtype if output_dtype is None else output_dtype
-        return _BF16ComputeLinear.apply(input, self.weight, self.bias, output_dtype, _get_compute_dtype())
+        # Skip autograd.Function overhead during inference
+        compute_dtype = _get_compute_dtype()
+        output = torch.matmul(input.to(compute_dtype), self.weight.to(compute_dtype).t())
+        if self.bias is not None:
+            output = output + self.bias.to(compute_dtype)
+        return output.to(output_dtype)
 
 
 class NativeMoELinear(BaseLinear):
