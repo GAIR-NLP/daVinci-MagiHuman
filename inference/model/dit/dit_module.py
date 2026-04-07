@@ -37,8 +37,17 @@ except ImportError:
     print("[dit_module] MagiCompiler not found, running without graph optimization (~20% slower on CUDA)")
 
     # Provide no-op stubs so decorated functions still work
-    def magi_compile(model, *args, **kwargs):
-        return model
+    def magi_compile(model=None, *args, **kwargs):
+        """No-op replacement: works both as @magi_compile and @magi_compile(config_patch=...)."""
+        if model is not None and callable(model) and not kwargs:
+            # Used as @magi_compile (without arguments)
+            return model
+        # Used as @magi_compile(config_patch=...) — return a decorator
+        def decorator(cls_or_fn):
+            return cls_or_fn
+        if model is not None and callable(model):
+            return model
+        return decorator
 
     def magi_register_custom_op(name=None, mutates_args=(), infer_output_meta_fn=None, is_subgraph_boundary=False, **kwargs):
         """No-op decorator that just returns the function unchanged."""
