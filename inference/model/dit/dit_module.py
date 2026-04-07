@@ -664,14 +664,20 @@ class Attention(torch.nn.Module):
         modality_dispatcher: ModalityDispatcher,
         cp_split_sizes: List[int],
     ) -> torch.Tensor:
-        # Model runs on CPU. Selectively use MPS for expensive matmuls.
+        # Model runs on CPU. Use MPS for the linear layers (they're on MPS).
         from inference.device_utils import get_mps_device
+        _mps = get_mps_device()
         _is_single = not hasattr(self.linear_qkv, 'num_experts') or self.linear_qkv.num_experts == 1
-        _mps = get_mps_device() if _is_single else None
 
         hidden_states = self.pre_norm(hidden_states, modality_dispatcher=modality_dispatcher).to(get_dtype())
         if _mps:
-            qkv = self.linear_qkv(hidden_states.to(_mps)).to(torch.float32).cpu()
+            if _is_single:
+                qkv = self.linear_qkv(hidden_states.to(_mps)).to(torch.float32).cpu()
+            else:
+                # Multi-expert: need ModalityDispatcher on MPS for dispatch/undispatch
+                md_mps = ModalityDispatcher(modality_dispatcher.modality_mapping.to(_mps),
+                                             modality_dispatcher.num_modalities)
+                qkv = self.linear_qkv(hidden_states.to(_mps), modality_dispatcher=md_mps).to(torch.float32).cpu()
         else:
             qkv = self.linear_qkv(hidden_states, modality_dispatcher=modality_dispatcher).to(torch.float32)
 
@@ -713,7 +719,12 @@ class Attention(torch.nn.Module):
 
         self_attn_out = self_attn_out.view(-1, self.config.num_heads_q * self.config.head_dim).to(get_dtype())
         if _mps:
-            out = self.linear_proj(self_attn_out.to(_mps)).cpu()
+            if _is_single:
+                out = self.linear_proj(self_attn_out.to(_mps)).cpu()
+            else:
+                md_mps = ModalityDispatcher(modality_dispatcher.modality_mapping.to(_mps),
+                                             modality_dispatcher.num_modalities)
+                out = self.linear_proj(self_attn_out.to(_mps), modality_dispatcher=md_mps).cpu()
         else:
             out = self.linear_proj(self_attn_out, modality_dispatcher=modality_dispatcher)
         return out

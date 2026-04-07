@@ -49,19 +49,22 @@ def get_dit(model_config, engine_config):
     from inference.device_utils import get_mps_device
     mps = get_mps_device()
     if mps and device == "cpu":
-        mps_layers = 0
+        mps_full = 0  # single-expert: MLP + linears on MPS
+        mps_linear = 0  # multi-expert: only linears on MPS (MLP stays CPU)
         for i, layer in enumerate(model.block.layers):
             is_single_expert = layer.mlp.up_gate_proj.num_experts == 1
+            # Attention linears: safe on MPS for ALL layers
+            layer.attention.linear_qkv.to(mps)
+            layer.attention.linear_proj.to(mps)
             if is_single_expert:
-                # Move MLP to MPS
+                # Single-expert MLP: safe on MPS
                 layer.mlp.to(mps)
-                # Move attention linears to MPS
-                layer.attention.linear_qkv.to(mps)
-                layer.attention.linear_proj.to(mps)
-                mps_layers += 1
-        if mps_layers > 0:
-            print_rank_0(f"MPS acceleration: {mps_layers}/{len(model.block.layers)} layers "
-                        f"(MLP + linears on MPS, norms + attention prep on CPU)")
+                mps_full += 1
+            else:
+                mps_linear += 1
+        print_rank_0(f"MPS acceleration: {mps_full} layers full MPS (MLP+linears), "
+                    f"{mps_linear} layers partial MPS (linears only). "
+                    f"Norms + attention prep on CPU.")
 
     print_mem_info_rank_0("Load model successfully")
 
