@@ -460,18 +460,23 @@ class Adapter(nn.Module):
         text_mask: mx.array,
     ) -> Tuple[mx.array, mx.array]:
         rope = self.rope(coords_mapping)
-        output = mx.zeros((x.shape[0], self.video_embedder.weight.shape[0]))
+        hidden_size = self.video_embedder.weight.shape[0]
 
-        # Per-modality embedding
-        if mx.any(text_mask):
-            text_in = self.text_embedder.weight.shape[1]
-            output = mx.where(text_mask[:, None], self.text_embedder(x[:, :text_in]), output)
-        if mx.any(audio_mask):
-            audio_in = self.audio_embedder.weight.shape[1]
-            output = mx.where(audio_mask[:, None], self.audio_embedder(x[:, :audio_in]), output)
-        if mx.any(video_mask):
-            video_in = self.video_embedder.weight.shape[1]
-            output = mx.where(video_mask[:, None], self.video_embedder(x[:, :video_in]), output)
+        # Compute all three embeddings for ALL tokens, then select via mask
+        # This avoids boolean indexing (unsupported in MLX) at the cost of
+        # extra compute, but it's only 3 linear layers on the input.
+        text_in = self.text_embedder.weight.shape[1]
+        audio_in = self.audio_embedder.weight.shape[1]
+        video_in = self.video_embedder.weight.shape[1]
+
+        text_emb = self.text_embedder(x[:, :text_in])    # [N, hidden]
+        audio_emb = self.audio_embedder(x[:, :audio_in])
+        video_emb = self.video_embedder(x[:, :video_in])
+
+        # Select per-token using masks
+        output = mx.where(text_mask[:, None], text_emb, mx.zeros_like(text_emb))
+        output = mx.where(audio_mask[:, None], audio_emb, output)
+        output = mx.where(video_mask[:, None], video_emb, output)
 
         return output, rope
 
@@ -536,21 +541,21 @@ class DiTModel(nn.Module):
         x = ModalityDispatcher.inv_permute(x, md.inv_permute_mapping)
 
         # 7. Per-modality output heads
+        # Compute both output heads for all tokens, select via mask
         max_out = max(self.video_in_channels, self.audio_in_channels)
-        x_out = mx.zeros((x.shape[0], max_out))
 
-        # Video output
-        x_video = x[video_mask].astype(mx.float32)
-        x_video = self.final_norm_video(x_video)
-        x_video = self.final_linear_video(x_video)
+        x_f32 = x.astype(mx.float32)
+        x_video = self.final_linear_video(self.final_norm_video(x_f32))
+        x_audio = self.final_linear_audio(self.final_norm_audio(x_f32))
 
-        # Audio output
-        x_audio = x[audio_mask].astype(mx.float32)
-        x_audio = self.final_norm_audio(x_audio)
-        x_audio = self.final_linear_audio(x_audio)
+        # Pad to common width
+        if self.video_in_channels < max_out:
+            x_video = mx.pad(x_video, [(0, 0), (0, max_out - self.video_in_channels)])
+        if self.audio_in_channels < max_out:
+            x_audio = mx.pad(x_audio, [(0, 0), (0, max_out - self.audio_in_channels)])
 
-        # Assemble output
-        x_out = mx.where(video_mask[:, None], mx.pad(x_video, [(0, 0), (0, max_out - self.video_in_channels)]), x_out)
-        x_out = mx.where(audio_mask[:, None], mx.pad(x_audio, [(0, 0), (0, max_out - self.audio_in_channels)]), x_out)
+        # Select: video tokens get video output, audio tokens get audio output
+        x_out = mx.where(video_mask[:, None], x_video, mx.zeros_like(x_video))
+        x_out = mx.where(audio_mask[:, None], x_audio, x_out)
 
         return x_out
