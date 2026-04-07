@@ -35,14 +35,20 @@ os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
 def get_device(force: str | None = None) -> str:
     """Return the best available device string.
 
-    Priority: cuda > mps > cpu.  Pass *force* to override (e.g. ``"cpu"``).
+    Priority: cuda > cpu.  Pass *force* to override (e.g. ``"mps"``).
+
+    NOTE: MPS is deliberately NOT auto-selected because PyTorch MPS kernels
+    produce subtle numerical errors in the DiT transformer that compound
+    across denoising steps, causing visual artifacts.  On Apple Silicon
+    with unified memory, CPU runs use the same physical RAM with no copy
+    penalty — only ~10x slower compute.  Use ``force="mps"`` to opt-in
+    for components known to be MPS-safe (e.g. VAE decode).
     """
     if force is not None:
         return force
     if torch.cuda.is_available():
         return f"cuda:{torch.cuda.current_device()}"
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
+    # MPS not auto-selected due to kernel bugs — see note above
     return "cpu"
 
 

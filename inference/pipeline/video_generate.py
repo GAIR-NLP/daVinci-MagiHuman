@@ -169,26 +169,16 @@ class MagiEvaluator:
         device: str = None,
         weight_dtype: torch.dtype = None,
     ):
-        from inference.device_utils import is_mps as _is_mps
         device = device or get_device()
         weight_dtype = weight_dtype or get_dtype(device)
 
-        # On MPS, run the DiT model on CPU to avoid MPS kernel bugs that
-        # cause visual artifacts. VAE encode/decode still runs on MPS.
-        # With unified memory on Apple Silicon, the only cost is ~20% slower
-        # denoising (no actual data copy, just different compute backend).
-        self._dit_on_cpu = _is_mps(device)
-        if self._dit_on_cpu:
-            print_rank_0("NOTE: Running DiT denoising on CPU (MPS used for VAE). This avoids MPS artifacts.")
-            model = model.cpu()
+        self._dit_on_cpu = False  # reserved for future MPS hybrid mode
 
         self.model = model
         self.model.eval()
         self.sr_model = sr_model
         if self.sr_model is not None:
             self.sr_model.eval()
-            if self._dit_on_cpu:
-                self.sr_model = self.sr_model.cpu()
             if env_is_true("CPU_OFFLOAD") and env_is_true("SR2_1080"):
                 self.model = self.model.to(torch.device("cpu"))
                 self.sr_model = self.sr_model.to(torch.device("cpu"))
@@ -249,32 +239,14 @@ class MagiEvaluator:
         )
         print_mem_info_rank_0("After init t5 gamma")
 
-    def _to_cpu(self, inputs):
-        """Move tuple of tensors/non-tensors to CPU for model forward."""
-        return tuple(t.cpu() if isinstance(t, torch.Tensor) else t for t in inputs)
-
-    def _to_device(self, outputs):
-        """Move model outputs back to self.device."""
-        if isinstance(outputs, tuple):
-            return tuple(t.to(self.device) if isinstance(t, torch.Tensor) else t for t in outputs)
-        if isinstance(outputs, torch.Tensor):
-            return outputs.to(self.device)
-        return outputs
-
     def forward(self, eval_input: EvalInput, use_sr_model: bool = False):
         if use_sr_model:
             eval_input = self.sr_data_proxy.process_input(eval_input)
-            if self._dit_on_cpu:
-                noise_pred = self._to_device(self.sr_model(*self._to_cpu(eval_input)))
-            else:
-                noise_pred = self.sr_model(*eval_input)
+            noise_pred = self.sr_model(*eval_input)
             noise_pred = self.sr_data_proxy.process_output(noise_pred)
         else:
             eval_input = self.data_proxy.process_input(eval_input)
-            if self._dit_on_cpu:
-                noise_pred = self._to_device(self.model(*self._to_cpu(eval_input)))
-            else:
-                noise_pred = self.model(*eval_input)
+            noise_pred = self.model(*eval_input)
             noise_pred = self.data_proxy.process_output(noise_pred)
         return noise_pred
 
