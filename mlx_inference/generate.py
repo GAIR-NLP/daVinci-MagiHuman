@@ -256,21 +256,69 @@ def main():
     print(f"  Decoded in {time.time()-t0:.1f}s")
 
     # ====================================================================
-    # Step 6: Save output
+    # Step 6: Save output with audio
     # ====================================================================
-    print("\n[6/6] Saving...")
+    print("\n[6/6] Saving with audio...")
     import imageio
     import soundfile as sf
-    import random
+    import subprocess
+    import shutil
+    import uuid
 
     save_path = f"{args.output_path}_{args.seconds}s_{args.br_width}x{args.br_height}.mp4"
-    import uuid
     uid = str(uuid.uuid4())[:8]
-    tmp_video = f"tmp_video_{uid}.mp4"
-    tmp_audio = f"tmp_audio_{uid}.wav"
+    tmp_video = os.path.join(os.getcwd(), f"_tmp_vid_{uid}.mp4")
+    tmp_audio = os.path.join(os.getcwd(), f"_tmp_aud_{uid}.wav")
 
-    # Save video directly (without audio merge to avoid ffmpeg issues)
-    imageio.mimwrite(save_path, video_np, fps=fps)
+    # Find ffmpeg
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        # Common locations on macOS
+        for path in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
+            if os.path.exists(path):
+                ffmpeg = path
+                break
+
+    # Save temp video
+    imageio.mimwrite(tmp_video, video_np, fps=fps, quality=8,
+                     output_params=["-loglevel", "error"] if ffmpeg else [])
+
+    # Save temp audio
+    sf.write(tmp_audio, audio_np, evaluator.audio_vae.sample_rate)
+
+    if ffmpeg and os.path.exists(tmp_video) and os.path.exists(tmp_audio):
+        # Merge video + audio with ffmpeg
+        cmd = [
+            ffmpeg, "-y",
+            "-i", tmp_video,
+            "-i", tmp_audio,
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac",
+            "-shortest",
+            save_path,
+            "-loglevel", "error",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"  Merged video + audio successfully")
+        else:
+            print(f"  ffmpeg merge failed: {result.stderr}")
+            # Fallback: save video without audio
+            os.rename(tmp_video, save_path)
+
+        # Cleanup temp files
+        for f in [tmp_video, tmp_audio]:
+            if os.path.exists(f):
+                os.remove(f)
+    else:
+        # No ffmpeg or temp files missing — save video only
+        if os.path.exists(tmp_video):
+            os.rename(tmp_video, save_path)
+        else:
+            imageio.mimwrite(save_path, video_np, fps=fps)
+        if os.path.exists(tmp_audio):
+            os.remove(tmp_audio)
+        print(f"  Saved video without audio (ffmpeg not found)")
 
     print(f"\nDone! Output: {save_path}")
     print(f"Total time: denoising={t_denoise:.0f}s")
