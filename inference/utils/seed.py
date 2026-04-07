@@ -17,6 +17,8 @@ import random
 import numpy as np
 import torch
 
+from inference.device_utils import manual_seed_all
+
 
 def set_random_seed(seed):
     """Set random seed.
@@ -29,6 +31,5 @@ def set_random_seed(seed):
         seed = random.randint(0, 2**32 - 1)
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    manual_seed_all(seed)
     return seed

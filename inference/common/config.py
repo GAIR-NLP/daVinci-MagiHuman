@@ -34,11 +34,11 @@ from pydantic_settings import (
 
 class EngineConfig(BaseModel):
     # Basic settings
-    seed: int = Field(1234, description="Random seed used for python, numpy, pytorch, and cuda.")
+    seed: int = Field(1234, description="Random seed used for python, numpy, pytorch, and cuda/mps.")
     load: str | None = Field(None, description="Directory containing a model checkpoint.")
 
     # Parallelism strategy
-    distributed_backend: Literal["nccl", "gloo"] = Field("nccl", description="Distributed backend. Choices: ['nccl', 'gloo'].")
+    distributed_backend: Literal["nccl", "gloo"] = Field("gloo", description="Distributed backend. Choices: ['nccl', 'gloo']. Use 'gloo' for MPS/CPU.")
     distributed_timeout_minutes: int = Field(10, description="Timeout minutes for torch.distributed.")
     sequence_parallel: bool = Field(False, description="Enable sequence parallel optimization.")
     tp_size: int = Field(1, description="Degree of tensor model parallelism.")

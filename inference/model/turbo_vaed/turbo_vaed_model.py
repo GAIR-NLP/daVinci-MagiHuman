@@ -1,10 +1,13 @@
 import json
 import torch
 
+from inference.device_utils import get_device, get_dtype
 from .turbo_vaed_module import TurboVAED
 
 
-def get_turbo_vaed(config_path, ckpt_path, device="cuda", weight_dtype=torch.float32) -> TurboVAED:
+def get_turbo_vaed(config_path, ckpt_path, device=None, weight_dtype=None) -> TurboVAED:
+    device = device or get_device()
+    weight_dtype = weight_dtype or torch.float32
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
     student = TurboVAED.from_config(config)

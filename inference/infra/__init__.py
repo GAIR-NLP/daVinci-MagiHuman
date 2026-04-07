@@ -15,23 +15,28 @@
 import torch
 
 from inference.common import parse_config
+from inference.device_utils import get_device, is_cuda, get_device_count
 from inference.infra.distributed import get_dp_rank, initialize_distributed
 from inference.utils import print_rank_0, set_random_seed
 
 
 def initialize_infra():
-    assert torch.cuda.is_available(), "Infra requires CUDA environment."
+    device = get_device()
+    if not (torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())):
+        print_rank_0("WARNING: No GPU accelerator found. Running on CPU (very slow).")
 
-    # Initialize distributed environment
-    initialize_distributed()
+    # Initialize distributed environment (only when CUDA multi-GPU is present)
+    if is_cuda(device) and get_device_count() > 0:
+        initialize_distributed()
 
     # Initialize config
     config = parse_config(verbose=True)
 
     # Initialize random seed
-    set_random_seed(config.engine_config.seed + 10 * get_dp_rank())
+    dp_rank = get_dp_rank() if torch.distributed.is_initialized() else 0
+    set_random_seed(config.engine_config.seed + 10 * dp_rank)
 
-    print_rank_0("Infra successfully initialized")
+    print_rank_0(f"Infra successfully initialized (device={device})")
 
 
 __all__ = ["initialize_infra"]

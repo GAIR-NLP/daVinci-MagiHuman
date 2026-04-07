@@ -29,6 +29,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from inference.common import CPUOffloadWrapper, EvaluationConfig, get_arch_memory
+from inference.device_utils import get_device, get_dtype, empty_cache, is_cuda
 from inference.infra.distributed import get_cp_group
 from inference.model.dit import DiTModel
 from inference.model.sa_audio import SAAudioFeatureExtractor
@@ -165,10 +166,11 @@ class MagiEvaluator:
         model: DiTModel,
         sr_model: Optional[DiTModel],
         config: EvaluationConfig,
-        device: str = "cuda",
-        weight_dtype: torch.dtype = torch.bfloat16,
+        device: str = None,
+        weight_dtype: torch.dtype = None,
     ):
-        device = f"cuda:{torch.cuda.current_device()}"
+        device = device or get_device()
+        weight_dtype = weight_dtype or get_dtype(device)
 
         self.model = model
         self.model.eval()
@@ -501,13 +503,17 @@ class MagiEvaluator:
         return videos
 
     def post_process(self, latent_video: torch.Tensor, latent_audio: torch.Tensor):
-        torch.cuda.empty_cache()
+        empty_cache()
         # CTHW -> THWC
         videos_np = self.decode_video(latent_video, group=get_cp_group())
-        torch.cuda.empty_cache()
+        empty_cache()
         event_path_timer().synced_record("Step7: Decode Audio", print_fn=print_rank_last)
 
-        if torch.distributed.get_rank() == torch.distributed.get_world_size() - 1:
+        is_last_rank = True
+        if torch.distributed.is_initialized():
+            is_last_rank = torch.distributed.get_rank() == torch.distributed.get_world_size() - 1
+
+        if is_last_rank:
             video_np = videos_np[0]
 
             latent_audio = latent_audio.squeeze(0)

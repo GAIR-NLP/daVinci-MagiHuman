@@ -18,7 +18,9 @@ from .parallel_state import get_tp_rank, get_tp_world_size
 
 
 def is_last_rank():
-    return torch.distributed.get_rank() == (torch.distributed.get_world_size() - 1)
+    if torch.distributed.is_initialized():
+        return torch.distributed.get_rank() == (torch.distributed.get_world_size() - 1)
+    return True
 
 
 def is_last_tp_cp_rank():
@@ -34,14 +36,18 @@ def get_world_size():
 
 
 def get_device(local_rank=None):
-    backend = torch.distributed.get_backend()
-    if backend == "nccl":
-        if local_rank is None:
-            device = torch.device("cuda")
+    from inference.device_utils import get_device as _get_device
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        backend = torch.distributed.get_backend()
+        if backend == "nccl":
+            if local_rank is None:
+                return torch.device("cuda")
+            else:
+                return torch.device(f"cuda:{local_rank}")
+        elif backend == "gloo":
+            # gloo can be used with MPS or CPU
+            device_str = _get_device()
+            return torch.device(device_str)
         else:
-            device = torch.device(f"cuda:{local_rank}")
-    elif backend == "gloo":
-        device = torch.device("cpu")
-    else:
-        raise RuntimeError
-    return device
+            return torch.device(_get_device())
+    return torch.device(_get_device())

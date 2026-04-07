@@ -20,8 +20,16 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 from einops import rearrange
 
+from inference.device_utils import get_device, is_mps, is_cpu, maybe_compile
 
 __all__ = ["TurboVAED"]
+
+# Conditionally apply torch.compile — no-op on MPS/CPU
+def _maybe_compile(fn):
+    """Decorator replacement for @torch.compile that skips on MPS/CPU."""
+    if is_mps() or is_cpu():
+        return fn
+    return torch.compile(fn)
 
 ACT2CLS = {"swish": nn.SiLU, "silu": nn.SiLU, "mish": nn.Mish, "gelu": nn.GELU, "relu": nn.ReLU}
 
@@ -142,7 +150,7 @@ class TurboVAEDConv2dSplitUpsampler(nn.Module):
             padding_mode=padding_mode,
         )
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.conv(hidden_states)
         hidden_states = torch.nn.functional.pixel_shuffle(hidden_states, self.stride[0])
@@ -187,7 +195,7 @@ class TurboVAEDCausalConv3d(nn.Module):
             padding_mode=padding_mode,
         )
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         time_kernel_size = self.kernel_size[0]
 
@@ -240,7 +248,7 @@ class TurboVAEDCausalDepthwiseSeperableConv3d(nn.Module):
         # Pointwise Convolution
         self.pointwise_conv = nn.Conv3d(in_channels, out_channels, kernel_size=1)  # 1x1x1 convolution to mix channels
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         time_kernel_size = self.kernel_size[0]
         if time_kernel_size > 1:
@@ -322,7 +330,7 @@ class TurboVAEDResnetBlock3d(nn.Module):
                 in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1, is_causal=is_causal
             )
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         hidden_states = inputs
 
@@ -469,7 +477,7 @@ class TurboVAEDMidBlock3d(nn.Module):
 
         self.gradient_checkpointing = False
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         r"""Forward method of the `LTXMidBlock3D` class."""
 
@@ -568,7 +576,7 @@ class TurboVAEDUpBlock3d(nn.Module):
 
         self.gradient_checkpointing = False
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, hidden_states: torch.Tensor, is_first_chunk: bool) -> torch.Tensor:
         if self.conv_in is not None:
             hidden_states = self.conv_in(hidden_states)
@@ -700,7 +708,7 @@ class TurboVAEDDecoder3d(nn.Module):
 
         self.gradient_checkpointing = False
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, hidden_states: torch.Tensor, is_first_chunk: bool) -> torch.Tensor:
         hidden_states = self.conv_in(hidden_states)
 
@@ -853,7 +861,7 @@ class TurboVAED(ModelMixin, ConfigMixin):
                 -0.0667,
             ],
             dtype=torch.float32,
-            device="cuda",
+            device=get_device(),
         )
         self.std = torch.tensor(
             [
@@ -907,7 +915,7 @@ class TurboVAED(ModelMixin, ConfigMixin):
                 0.7744,
             ],
             dtype=torch.float32,
-            device="cuda",
+            device=get_device(),
         )
         self.scale = [self.mean, 1.0 / self.std]
 

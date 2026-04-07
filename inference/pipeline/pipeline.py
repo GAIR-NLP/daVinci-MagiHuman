@@ -22,6 +22,7 @@ import torch
 from PIL import Image
 
 from inference.common import EvaluationConfig, parse_config
+from inference.device_utils import get_device, fork_rng_devices
 from inference.model.dit import get_dit
 from inference.model.dit import DiTModel
 from .video_generate import MagiEvaluator
@@ -31,7 +32,8 @@ from .video_process import merge_video_and_audio, upsample_video
 class MagiPipeline:
     """Pipeline facade for inference."""
 
-    def __init__(self, model: DiTModel, evaluation_config: EvaluationConfig, device: str = "cuda"):
+    def __init__(self, model: DiTModel, evaluation_config: EvaluationConfig, device: str = None):
+        device = device or get_device()
         self.model = model
         self.evaluation_config = evaluation_config
         config = parse_config()
@@ -75,7 +77,7 @@ class MagiPipeline:
         else:
             save_path = f"{save_path_prefix}_{seconds}s_{br_width}x{br_height}.mp4"
 
-        with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+        with torch.random.fork_rng(devices=fork_rng_devices()):
             torch.random.manual_seed(seed)
             video_np, audio_np = self.evaluator.evaluate(
                 prompt,
@@ -93,7 +95,12 @@ class MagiPipeline:
         if output_width is not None and output_height is not None:
             video_np = upsample_video(video_np, output_width, output_height, upsample_mode)
 
-        if torch.distributed.get_rank() == torch.distributed.get_world_size() - 1:
+        # Save output (on rank 0 or single-process mode)
+        is_last_rank = True
+        if torch.distributed.is_initialized():
+            is_last_rank = torch.distributed.get_rank() == torch.distributed.get_world_size() - 1
+
+        if is_last_rank:
             saving_name = f"{prompt.replace(' ', '_')[:10]}"
             audio_path = saving_name + str(random.randint(0, 1000000)) + ".wav"
             video_path = saving_name + str(random.randint(0, 1000000)) + ".mp4"
@@ -105,4 +112,3 @@ class MagiPipeline:
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
         return save_path
-
