@@ -421,7 +421,7 @@ class MagiEvaluator:
 
         # forward
         for idx, t in enumerate(
-            tqdm(timesteps, disable=torch.distributed.get_rank() != torch.distributed.get_world_size() - 1)
+            tqdm(timesteps, disable=False if not torch.distributed.is_initialized() else torch.distributed.get_rank() != torch.distributed.get_world_size() - 1)
         ):
             if latent_image is not None:
                 latent_video[:, :, :1] = latent_image[:, :, :1]
