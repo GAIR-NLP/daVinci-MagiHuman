@@ -271,7 +271,7 @@ print(f'DONE shape={{ctx.shape}} len={{clen}}')
     # Step 5: Super-Resolution (optional)
     # ====================================================================
     if args.sr_width and args.sr_height and os.path.exists(args.sr_checkpoint):
-        print(f"\n[5/7] Super-Resolution ({args.sr_width}x{args.sr_height}, {args.sr_steps} steps)...")
+        print(f"\n[5/7] Super-Resolution ({args.sr_width}x{args.sr_height}, {args.sr_steps} steps, CFG=3.5)...")
         t_sr_start = time.time()
 
         # Compute SR latent dimensions
@@ -306,53 +306,128 @@ print(f'DONE shape={{ctx.shape}} len={{clen}}')
         sr_br_image = vae_sr.encode(sr_img_t).to(torch.float32)
         del vae_sr; free_memory()
 
-        # Add noise to audio for SR
-        sr_audio_noise_scale = config.evaluation_config.sr_audio_noise_scale  # 0.7
-        latent_audio = torch.randn_like(br_latent_audio, device="cpu") * sr_audio_noise_scale + br_latent_audio * (1 - sr_audio_noise_scale)
+        # Audio for SR: save clean audio for final decode, create noisy for SR model
+        clean_latent_audio = br_latent_audio.clone()
+        sr_audio_noise_scale = config.evaluation_config.sr_audio_noise_scale
+        sr_latent_audio = torch.randn_like(br_latent_audio, device="cpu") * sr_audio_noise_scale + br_latent_audio * (1 - sr_audio_noise_scale)
+        latent_audio = sr_latent_audio
 
-        # Load SR MLX DiT model (same architecture, different weights)
-        print(f"  Loading SR model from {args.sr_checkpoint}...")
+        # Encode negative prompt for CFG (in subprocess to save memory)
+        print("  Encoding negative prompt for CFG...")
+        negative_prompt = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards, low quality, worst quality, poor quality, noise, background noise, hiss, hum, buzz, crackle, static, compression artifacts"
+        neg_embed_path = os.path.join(tempfile.gettempdir(), f"_magi_neg_embed_{os.getpid()}.npz")
+        neg_script = f"""
+import sys, os, torch, numpy as np
+sys.argv = {sys.argv}
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+os.environ['WORLD_SIZE'] = '1'; os.environ['RANK'] = '0'
+os.environ['LOCAL_RANK'] = '0'; os.environ['MASTER_ADDR'] = 'localhost'; os.environ['MASTER_PORT'] = '29500'
+import inference.device_utils as du
+du.get_device = lambda force=None: force if force else 'cpu'
+from inference.pipeline.prompt_process import get_padded_t5_gemma_embedding
+ctx, clen = get_padded_t5_gemma_embedding(
+    {repr(negative_prompt)},
+    {repr(config.evaluation_config.txt_model_path)},
+    'cpu', torch.float32,
+    {config.evaluation_config.t5_gemma_target_length},
+)
+np.savez({repr(neg_embed_path)}, context=ctx.numpy(), context_len=clen)
+"""
+        result = sp.run([sys.executable, "-c", neg_script],
+                       capture_output=True, text=True, timeout=300,
+                       env={**os.environ, "PYTHONPATH": os.getcwd()})
+        if result.returncode != 0:
+            print(f"  Negative prompt encoding failed, skipping CFG")
+            context_null = context  # fallback: same as positive
+            context_null_len = original_context_len
+        else:
+            neg_data = np.load(neg_embed_path)
+            context_null = torch.from_numpy(neg_data["context"])
+            context_null_len = int(neg_data["context_len"])
+            os.remove(neg_embed_path)
+        print(f"  Negative prompt encoded")
+
+        # Load SR MLX DiT model (fp32 for CFG precision — subtraction needs it)
+        print(f"  Loading SR model from {args.sr_checkpoint} (fp32 for CFG precision)...")
         sr_mlx_model = DiTModel(ModelConfig())
-        sr_flat = load_dit_weights(args.sr_checkpoint, dtype=mx.float16, verbose=False)
+        sr_flat = load_dit_weights(args.sr_checkpoint, dtype=mx.float32, verbose=False)
         sr_mlx_model.load_weights(list(sr_flat.items()))
         mx.eval(sr_mlx_model.parameters())
         del sr_flat; free_memory()
         print(f"  SR model loaded")
 
-        # SR denoising loop
+        # SR denoising loop with classifier-free guidance
         import copy
         sr_data_proxy_config = copy.deepcopy(config.evaluation_config.data_proxy_config)
         sr_data_proxy_config.coords_style = "v1"
         sr_data_proxy = MagiDataProxy(sr_data_proxy_config)
+        sr_data_proxy_uncond = MagiDataProxy(sr_data_proxy_config)
 
         sr_scheduler = FlowUniPCMultistepScheduler()
         sr_scheduler.set_timesteps(args.sr_steps, device="cpu", shift=config.evaluation_config.shift)
         sr_timesteps = sr_scheduler.timesteps
+
+        # CFG parameters
+        sr_guidance_scale = config.evaluation_config.sr_video_txt_guidance_scale  # 3.5
+        audio_guidance_scale = config.evaluation_config.audio_txt_guidance_scale  # 5.0
+        use_cfg_trick = config.evaluation_config.use_cfg_trick
+        cfg_trick_start_frame = config.evaluation_config.cfg_trick_start_frame  # 13
+        cfg_trick_value = config.evaluation_config.cfg_trick_value  # 2.0
+
+        # Build per-frame guidance scale tensor with cfg_trick
+        guidance_tensor = torch.full((1, 1, latent_length, 1, 1), sr_guidance_scale)
+        if use_cfg_trick:
+            guidance_tensor[:, :, :cfg_trick_start_frame] = min(cfg_trick_value, sr_guidance_scale)
 
         for idx, t in enumerate(sr_timesteps):
             step_t0 = time.time()
             if sr_br_image is not None:
                 latent_video[:, :, :1] = sr_br_image[:, :, :1]
 
-            eval_input = EvalInput(
+            # === Conditioned forward (real prompt) ===
+            eval_input_cond = EvalInput(
                 x_t=latent_video, audio_x_t=latent_audio,
                 audio_feat_len=[latent_audio.shape[1]],
                 txt_feat=context, txt_feat_len=[original_context_len],
             )
-            processed = sr_data_proxy.process_input(eval_input)
-            mlx_inputs = [torch_to_mlx(t_) if isinstance(t_, torch.Tensor) else t_ for t_ in processed]
+            proc_cond = sr_data_proxy.process_input(eval_input_cond)
+            mlx_cond = [torch_to_mlx(t_) if isinstance(t_, torch.Tensor) else t_ for t_ in proc_cond]
+            out_cond = sr_mlx_model(*mlx_cond[:3])
+            mx.eval(out_cond)
+            pt_cond = mlx_to_torch(out_cond)
+            pred_cond = sr_data_proxy.process_output(pt_cond)
+            v_cond_video = pred_cond[0]
+            v_cond_audio = pred_cond[1]
 
-            mlx_out = sr_mlx_model(*mlx_inputs[:3])
-            mx.eval(mlx_out)
-            pt_out = mlx_to_torch(mlx_out)
+            # === Unconditioned forward (negative prompt) ===
+            eval_input_uncond = EvalInput(
+                x_t=latent_video, audio_x_t=latent_audio,
+                audio_feat_len=[latent_audio.shape[1]],
+                txt_feat=context_null, txt_feat_len=[context_null_len],
+            )
+            proc_uncond = sr_data_proxy_uncond.process_input(eval_input_uncond)
+            mlx_uncond = [torch_to_mlx(t_) if isinstance(t_, torch.Tensor) else t_ for t_ in proc_uncond]
+            out_uncond = sr_mlx_model(*mlx_uncond[:3])
+            mx.eval(out_uncond)
+            pt_uncond = mlx_to_torch(out_uncond)
+            pred_uncond = sr_data_proxy_uncond.process_output(pt_uncond)
+            v_uncond_video = pred_uncond[0]
+            v_uncond_audio = pred_uncond[1]
 
-            noise_pred = sr_data_proxy.process_output(pt_out)
-            latent_video = sr_scheduler.step_ddim(noise_pred[0], idx, latent_video)
-            latent_audio = sr_scheduler.step_ddim(noise_pred[1], idx, latent_audio)
-            print(f"  SR Step {idx+1}/{args.sr_steps}: {time.time()-step_t0:.1f}s")
+            # === CFG interpolation (SR always uses fixed guidance, no t>500 check) ===
+            v_cfg_video = v_uncond_video + guidance_tensor * (v_cond_video - v_uncond_video)
+            v_cfg_audio = v_uncond_audio + audio_guidance_scale * (v_cond_audio - v_uncond_audio)
+
+            # === Scheduler step (video only — SR doesn't update audio) ===
+            latent_video = sr_scheduler.step(v_cfg_video, t, latent_video, return_dict=False)[0]
+
+            print(f"  SR Step {idx+1}/{args.sr_steps}: {time.time()-step_t0:.1f}s (CFG)")
 
         if sr_br_image is not None:
             latent_video[:, :, :1] = sr_br_image[:, :, :1]
+
+        # Use clean base audio for final decode
+        latent_audio = clean_latent_audio
 
         del sr_mlx_model; free_memory()
         t_sr = time.time() - t_sr_start
