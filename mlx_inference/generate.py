@@ -40,6 +40,10 @@ def parse_args():
     parser.add_argument("--br_height", type=int, default=256)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--steps", type=int, default=8)
+    parser.add_argument("--sr_width", type=int, default=None, help="Super-resolution width (e.g. 960 for 540p)")
+    parser.add_argument("--sr_height", type=int, default=None, help="Super-resolution height (e.g. 544 for 540p)")
+    parser.add_argument("--sr_steps", type=int, default=5, help="SR denoising steps")
+    parser.add_argument("--sr_checkpoint", type=str, default="checkpoints/model_repo/540p_sr", help="SR model checkpoint dir")
     parser.add_argument("--fp16", action="store_true", help="Use float16 DiT weights (saves ~30GB)")
     args, _ = parser.parse_known_args()
     return args
@@ -255,18 +259,122 @@ print(f'DONE shape={{ctx.shape}} len={{clen}}')
     t_denoise = time.time() - t_denoise_start
     print(f"  Total denoising: {t_denoise:.1f}s ({t_denoise/args.steps:.1f}s/step)")
 
-    # Free MLX DiT model (~30-61GB) before loading VAE decoder
+    # Free base MLX DiT model before SR or VAE
     del mlx_model; free_memory()
-    print("  MLX DiT freed from memory")
+    print("  Base DiT freed from memory")
+
+    # Save base resolution results
+    br_latent_video = latent_video
+    br_latent_audio = latent_audio
 
     # ====================================================================
-    # Step 5: Decode video (load Wan2.2 VAE on MPS, decode, free)
+    # Step 5: Super-Resolution (optional)
     # ====================================================================
-    print("\n[5/6] Decoding video (Wan2.2 VAE on MPS)...")
+    if args.sr_width and args.sr_height and os.path.exists(args.sr_checkpoint):
+        print(f"\n[5/7] Super-Resolution ({args.sr_width}x{args.sr_height}, {args.sr_steps} steps)...")
+        t_sr_start = time.time()
+
+        # Compute SR latent dimensions
+        sr_latent_height = args.sr_height // vae_stride[1] // patch_size[1] * patch_size[1]
+        sr_latent_width = args.sr_width // vae_stride[2] // patch_size[2] * patch_size[2]
+        sr_height = sr_latent_height * vae_stride[1]
+        sr_width = sr_latent_width * vae_stride[2]
+        print(f"  SR latent: {latent_length}x{sr_latent_height}x{sr_latent_width} -> {sr_width}x{sr_height}")
+
+        # Trilinear interpolate base latent to SR resolution
+        latent_video = torch.nn.functional.interpolate(
+            br_latent_video,
+            size=(latent_length, sr_latent_height, sr_latent_width),
+            mode="trilinear", align_corners=True,
+        )
+
+        # Add noise (noise_value=220 from config)
+        noise_value = config.evaluation_config.noise_value  # 220
+        from inference.pipeline.video_generate import ZeroSNRDDPMDiscretization
+        sigmas = ZeroSNRDDPMDiscretization()(1000, do_append_zero=False, flip=True)
+        if noise_value != 0:
+            noise = torch.randn_like(latent_video, device="cpu")
+            sigma = sigmas[noise_value]
+            latent_video = latent_video * sigma + noise * (1 - sigma**2) ** 0.5
+
+        # Encode reference image at SR resolution
+        vae_sr = get_vae2_2(vae_path, device="cpu")
+        sr_image = load_image(args.image_path)
+        sr_image = resizecrop(sr_image, sr_height, sr_width)
+        sr_img_t = video_processor.preprocess(sr_image, height=sr_height, width=sr_width)
+        sr_img_t = sr_img_t.to(dtype=torch.float32).unsqueeze(2)
+        sr_br_image = vae_sr.encode(sr_img_t).to(torch.float32)
+        del vae_sr; free_memory()
+
+        # Add noise to audio for SR
+        sr_audio_noise_scale = config.evaluation_config.sr_audio_noise_scale  # 0.7
+        latent_audio = torch.randn_like(br_latent_audio, device="cpu") * sr_audio_noise_scale + br_latent_audio * (1 - sr_audio_noise_scale)
+
+        # Load SR MLX DiT model (same architecture, different weights)
+        print(f"  Loading SR model from {args.sr_checkpoint}...")
+        sr_mlx_model = DiTModel(ModelConfig())
+        sr_flat = load_dit_weights(args.sr_checkpoint, dtype=mx.float16, verbose=False)
+        sr_mlx_model.load_weights(list(sr_flat.items()))
+        mx.eval(sr_mlx_model.parameters())
+        del sr_flat; free_memory()
+        print(f"  SR model loaded")
+
+        # SR denoising loop
+        import copy
+        sr_data_proxy_config = copy.deepcopy(config.evaluation_config.data_proxy_config)
+        sr_data_proxy_config.coords_style = "v1"
+        sr_data_proxy = MagiDataProxy(sr_data_proxy_config)
+
+        sr_scheduler = FlowUniPCMultistepScheduler()
+        sr_scheduler.set_timesteps(args.sr_steps, device="cpu", shift=config.evaluation_config.shift)
+        sr_timesteps = sr_scheduler.timesteps
+
+        for idx, t in enumerate(sr_timesteps):
+            step_t0 = time.time()
+            if sr_br_image is not None:
+                latent_video[:, :, :1] = sr_br_image[:, :, :1]
+
+            eval_input = EvalInput(
+                x_t=latent_video, audio_x_t=latent_audio,
+                audio_feat_len=[latent_audio.shape[1]],
+                txt_feat=context, txt_feat_len=[original_context_len],
+            )
+            processed = sr_data_proxy.process_input(eval_input)
+            mlx_inputs = [torch_to_mlx(t_) if isinstance(t_, torch.Tensor) else t_ for t_ in processed]
+
+            mlx_out = sr_mlx_model(*mlx_inputs[:3])
+            mx.eval(mlx_out)
+            pt_out = mlx_to_torch(mlx_out)
+
+            noise_pred = sr_data_proxy.process_output(pt_out)
+            latent_video = sr_scheduler.step_ddim(noise_pred[0], idx, latent_video)
+            latent_audio = sr_scheduler.step_ddim(noise_pred[1], idx, latent_audio)
+            print(f"  SR Step {idx+1}/{args.sr_steps}: {time.time()-step_t0:.1f}s")
+
+        if sr_br_image is not None:
+            latent_video[:, :, :1] = sr_br_image[:, :, :1]
+
+        del sr_mlx_model; free_memory()
+        t_sr = time.time() - t_sr_start
+        print(f"  SR total: {t_sr:.1f}s")
+
+        # Update dimensions for VAE decode
+        br_width = sr_width
+        br_height = sr_height
+        n_steps_label = f"{args.steps}+{args.sr_steps}"
+    else:
+        if args.sr_width and args.sr_height:
+            print(f"\n  SR skipped (checkpoint not found at {args.sr_checkpoint})")
+        n_steps_label = str(args.steps)
+
+    # ====================================================================
+    # Step 6: Decode video (Wan2.2 VAE)
+    # ====================================================================
+    decode_step = "6/7" if args.sr_width else "5/6"
+    print(f"\n[{decode_step}] Decoding video (Wan2.2 VAE)...")
     t0 = time.time()
 
     mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-    # Use CPU for high-res VAE decode (MPS OOMs at 720p+ due to large intermediates)
     vae_pixels = br_width * br_height
     vae_device = "cpu" if vae_pixels > 480 * 640 else ("mps" if mps_available else "cpu")
     if vae_device == "cpu" and mps_available:
@@ -303,7 +411,10 @@ print(f'DONE shape={{ctx.shape}} len={{clen}}')
     import shutil
     import uuid
 
-    save_path = f"{args.output_path}_{args.seconds}s_{args.br_width}x{args.br_height}.mp4"
+    if args.sr_width and args.sr_height:
+        save_path = f"{args.output_path}_{args.seconds}s_{br_width}x{br_height}_sr.mp4"
+    else:
+        save_path = f"{args.output_path}_{args.seconds}s_{args.br_width}x{args.br_height}.mp4"
     uid = str(uuid.uuid4())[:8]
     tmp_video = os.path.join(os.getcwd(), f"_tmp_vid_{uid}.mp4")
     tmp_audio = os.path.join(os.getcwd(), f"_tmp_aud_{uid}.wav")
