@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """End-to-end video generation: PyTorch text/VAE + MLX DiT.
 
+Memory-optimized: loads each model sequentially and frees it before the next.
+
 Usage:
     python mlx_inference/generate.py \
         --config-load-path example/distill/config_mps.json \
@@ -9,6 +11,7 @@ Usage:
         --output_path output_mlx_test
 """
 import argparse
+import gc
 import os
 import sys
 import time
@@ -37,36 +40,46 @@ def parse_args():
     parser.add_argument("--br_height", type=int, default=256)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--steps", type=int, default=8)
-    parser.add_argument("--fp16", action="store_true", help="Use float16 weights (saves memory, same speed)")
+    parser.add_argument("--fp16", action="store_true", help="Use float16 DiT weights (saves ~30GB)")
     args, _ = parser.parse_known_args()
     return args
 
 
 def torch_to_mlx(t: torch.Tensor) -> mx.array:
-    """Convert PyTorch tensor to MLX array."""
     return mx.array(t.detach().cpu().float().numpy())
 
 
 def mlx_to_torch(a: mx.array) -> torch.Tensor:
-    """Convert MLX array to PyTorch tensor."""
     mx.eval(a)
     return torch.from_numpy(np.array(a, copy=False).copy())
 
 
+def free_memory():
+    """Aggressively free all unused memory."""
+    gc.collect()
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    try:
+        mx.clear_cache()
+    except:
+        pass
+
+
 def main():
     args = parse_args()
+    total_t0 = time.time()
+    # Force unbuffered output
+    import builtins
+    _print = builtins.print
+    def print(*a, **kw):
+        kw.setdefault('flush', True)
+        _print(*a, **kw)
+
     print(f"MLX Video Generation")
     print(f"  Prompt: {args.prompt}")
     print(f"  Image: {args.image_path}")
     print(f"  Size: {args.br_width}x{args.br_height}, {args.seconds}s, {args.steps} steps")
 
-    # ====================================================================
-    # Step 1: Load PyTorch pipeline (VAE + text encoder) — no DiT needed
-    # ====================================================================
-    print("\n[1/6] Loading PyTorch VAE + text encoder...")
-    t0 = time.time()
-
-    # Force PyTorch to CPU
     import inference.device_utils as du
     du.get_device = lambda force=None: force if force else "cpu"
 
@@ -76,21 +89,104 @@ def main():
     config = parse_config()
     set_random_seed(args.seed)
 
-    # Load ONLY VAE + audio — skip the DiT model entirely
-    from inference.pipeline.video_generate import MagiEvaluator
-
-    # Pass None as model — MagiEvaluator only stores it, doesn't use it during init
-    class DummyModel:
-        def eval(self): return self
-        def cpu(self): return self
-        def to(self, *a, **k): return self
-    evaluator = MagiEvaluator(DummyModel(), None, config.evaluation_config)
-    print(f"  PyTorch VAE/text loaded in {time.time()-t0:.1f}s")
+    vae_stride = config.evaluation_config.vae_stride
+    patch_size = config.evaluation_config.patch_size
+    br_latent_height = args.br_height // vae_stride[1] // patch_size[1] * patch_size[1]
+    br_latent_width = args.br_width // vae_stride[2] // patch_size[2] * patch_size[2]
+    br_height = br_latent_height * vae_stride[1]
+    br_width = br_latent_width * vae_stride[2]
+    fps = config.evaluation_config.fps
+    num_frames = args.seconds * fps + 1
+    latent_length = (num_frames - 1) // 4 + 1
 
     # ====================================================================
-    # Step 2: Load MLX DiT model
+    # Step 1: Encode text in a SUBPROCESS (guarantees 38GB is freed after)
     # ====================================================================
-    print("\n[2/6] Loading MLX DiT model...")
+    print("\n[1/6] Encoding text...")
+    t0 = time.time()
+
+    # Run text encoding in subprocess to guarantee memory cleanup
+    import subprocess as sp
+    import tempfile
+    embed_path = os.path.join(tempfile.gettempdir(), f"_magi_text_embed_{os.getpid()}.npy")
+    encode_script = f"""
+import sys, os, torch, numpy as np
+sys.argv = {sys.argv}
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+os.environ['WORLD_SIZE'] = '1'; os.environ['RANK'] = '0'
+os.environ['LOCAL_RANK'] = '0'; os.environ['MASTER_ADDR'] = 'localhost'; os.environ['MASTER_PORT'] = '29500'
+import inference.device_utils as du
+du.get_device = lambda force=None: force if force else 'cpu'
+from inference.pipeline.prompt_process import get_padded_t5_gemma_embedding
+ctx, clen = get_padded_t5_gemma_embedding(
+    {repr(args.prompt)},
+    {repr(config.evaluation_config.txt_model_path)},
+    'cpu', torch.float32,
+    {config.evaluation_config.t5_gemma_target_length},
+)
+np.savez({repr(embed_path)}, context=ctx.numpy(), context_len=clen)
+print(f'DONE shape={{ctx.shape}} len={{clen}}')
+"""
+    result = sp.run(
+        [sys.executable, "-c", encode_script],
+        capture_output=True, text=True, timeout=300,
+        env={**os.environ, "PYTHONPATH": os.getcwd()},
+    )
+    if result.returncode != 0:
+        print(f"  Text encoding failed (rc={result.returncode}):")
+        print(f"  stdout: {result.stdout[-300:]}")
+        print(f"  stderr: {result.stderr[-300:]}")
+        sys.exit(1)
+
+    # Load the embedding from disk (tiny: ~9MB)
+    npz_path = embed_path if embed_path.endswith(".npz") else embed_path + ".npz"
+    if not os.path.exists(npz_path):
+        print(f"  Error: embedding file not found at {npz_path}")
+        print(f"  Subprocess stdout: {result.stdout[-200:]}")
+        sys.exit(1)
+    data = np.load(npz_path)
+    context = torch.from_numpy(data["context"])
+    original_context_len = int(data["context_len"])
+    os.remove(npz_path)
+    print(f"  Text encoded in {time.time()-t0:.1f}s, shape={context.shape} (subprocess, 0 residual memory)", flush=True)
+
+    # ====================================================================
+    # Step 2: Encode image (load VAE encoder, encode, then FREE it)
+    # ====================================================================
+    print("\n[2/6] Encoding image...")
+    t0 = time.time()
+
+    from inference.model.vae2_2.vae2_2_model import get_vae2_2
+    vae_path = os.path.join(config.evaluation_config.vae_model_path, "Wan2.2_VAE.pth")
+    vae_encode = get_vae2_2(vae_path, device="cpu")
+
+    from diffusers.utils import load_image
+    from inference.pipeline.video_process import resizecrop
+    from diffusers.video_processor import VideoProcessor
+
+    image = load_image(args.image_path)
+    image = resizecrop(image, br_height, br_width)
+    video_processor = VideoProcessor(vae_scale_factor=16)
+    image_tensor = video_processor.preprocess(image, height=br_height, width=br_width)
+    image_tensor = image_tensor.to(dtype=torch.float32).unsqueeze(2)
+    br_image = vae_encode.encode(image_tensor).to(torch.float32)
+
+    # Free the VAE encoder (~2.6GB)
+    del vae_encode
+    free_memory()
+    print(f"  Image encoded in {time.time()-t0:.1f}s, VAE freed")
+
+    # Create initial noise
+    torch.manual_seed(args.seed)
+    latent_video = torch.randn(1, 48, latent_length, br_latent_height, br_latent_width, dtype=torch.float32)
+    latent_audio = torch.randn(1, num_frames, 64, dtype=torch.float32)
+    latent_video[:, :, :1] = br_image[:, :, :1]
+    print(f"  latent_video: {latent_video.shape}, latent_audio: {latent_audio.shape}")
+
+    # ====================================================================
+    # Step 3: Load MLX DiT model (main memory consumer: ~30-61GB)
+    # ====================================================================
+    print(f"\n[3/6] Loading MLX DiT model...")
     t0 = time.time()
 
     class ModelConfig:
@@ -104,65 +200,23 @@ def main():
     from mlx_inference.model.dit_module import DiTModel
     from mlx_inference.loader.weight_converter import load_dit_weights
 
+    # Auto-select dtype: fp16 for large resolutions to save ~30GB memory
+    total_pixels = br_width * br_height * latent_length
+    use_fp16 = args.fp16 or (total_pixels > 256 * 448 * 13 * 2)  # > 2x baseline
+    dit_dtype = mx.float16 if use_fp16 else mx.float32
+    if use_fp16 and not args.fp16:
+        print(f"  Auto-selecting fp16 for {br_width}x{br_height} (saves ~30GB memory)")
     mlx_model = DiTModel(ModelConfig())
-    # fp32 is same speed as fp16 on Apple Silicon (unified memory) and avoids
-    # precision artifacts. Use --fp16 to save memory if needed.
-    dit_dtype = mx.float16 if getattr(args, 'fp16', False) else mx.float32
     flat = load_dit_weights("checkpoints/model_repo/distill", dtype=dit_dtype, verbose=True)
     mlx_model.load_weights(list(flat.items()))
     mx.eval(mlx_model.parameters())
-    del flat
-    import gc; gc.collect()
-    print(f"  MLX DiT loaded in {time.time()-t0:.1f}s")
+    del flat; free_memory()
+    print(f"  MLX DiT loaded in {time.time()-t0:.1f}s ({dit_dtype})")
 
     # ====================================================================
-    # Step 3: Encode text + image
+    # Step 4: Denoising loop (MLX DiT)
     # ====================================================================
-    print("\n[3/6] Encoding text and image...")
-    t0 = time.time()
-
-    from inference.pipeline.prompt_process import get_padded_t5_gemma_embedding
-    context, original_context_len = get_padded_t5_gemma_embedding(
-        args.prompt,
-        evaluator.txt_model_path,
-        "cpu",
-        torch.float32,
-        config.evaluation_config.t5_gemma_target_length,
-    )
-
-    from diffusers.utils import load_image
-    from inference.pipeline.video_process import resizecrop
-    from diffusers.video_processor import VideoProcessor
-
-    vae_stride = config.evaluation_config.vae_stride
-    patch_size = config.evaluation_config.patch_size
-    br_latent_height = args.br_height // vae_stride[1] // patch_size[1] * patch_size[1]
-    br_latent_width = args.br_width // vae_stride[2] // patch_size[2] * patch_size[2]
-    br_height = br_latent_height * vae_stride[1]
-    br_width = br_latent_width * vae_stride[2]
-
-    image = load_image(args.image_path)
-    image = resizecrop(image, br_height, br_width)
-    video_processor = VideoProcessor(vae_scale_factor=16)
-    image_tensor = video_processor.preprocess(image, height=br_height, width=br_width)
-    image_tensor = image_tensor.to(dtype=torch.float32).unsqueeze(2)
-    br_image = evaluator.vae.encode(image_tensor).to(torch.float32)
-
-    fps = config.evaluation_config.fps
-    num_frames = args.seconds * fps + 1
-    latent_length = (num_frames - 1) // 4 + 1
-
-    torch.manual_seed(args.seed)
-    latent_video = torch.randn(1, 48, latent_length, br_latent_height, br_latent_width, dtype=torch.float32)
-    latent_audio = torch.randn(1, num_frames, 64, dtype=torch.float32)
-
-    print(f"  Text encoded, image encoded in {time.time()-t0:.1f}s")
-    print(f"  latent_video: {latent_video.shape}, latent_audio: {latent_audio.shape}")
-
-    # ====================================================================
-    # Step 4: Construct data proxy inputs + run denoising with MLX
-    # ====================================================================
-    print(f"\n[4/6] Denoising ({args.steps} steps with MLX)...")
+    print(f"\n[4/6] Denoising ({args.steps} steps)...")
 
     from inference.pipeline.scheduler_unipc import FlowUniPCMultistepScheduler
     from inference.pipeline.data_proxy import MagiDataProxy
@@ -173,98 +227,71 @@ def main():
     scheduler.set_timesteps(args.steps, device="cpu", shift=config.evaluation_config.shift)
     timesteps = scheduler.timesteps
 
-    # Set first frame to encoded image
-    latent_video[:, :, :1] = br_image[:, :, :1]
-
     t_denoise_start = time.time()
     for idx, t in enumerate(timesteps):
         step_t0 = time.time()
 
-        # Construct eval input
-        latent_video[:, :, :1] = br_image[:, :, :1]  # Anchor first frame
+        latent_video[:, :, :1] = br_image[:, :, :1]
         eval_input = EvalInput(
-            x_t=latent_video,
-            audio_x_t=latent_audio,
+            x_t=latent_video, audio_x_t=latent_audio,
             audio_feat_len=[latent_audio.shape[1]],
-            txt_feat=context,
-            txt_feat_len=[original_context_len],
+            txt_feat=context, txt_feat_len=[original_context_len],
         )
 
-        # Process input through data proxy (PyTorch)
         processed = data_proxy.process_input(eval_input)
-        # processed is a tuple of tensors — the model's actual input args
+        mlx_inputs = [torch_to_mlx(t) if isinstance(t, torch.Tensor) else t for t in processed]
 
-        # Convert to MLX
-        mlx_inputs = []
-        for tensor in processed:
-            if isinstance(tensor, torch.Tensor):
-                mlx_inputs.append(torch_to_mlx(tensor))
-            else:
-                mlx_inputs.append(tensor)
-
-        # Run MLX DiT forward
-        # The model expects (x, coords_mapping, modality_mapping, ...)
-        # The data_proxy output format matches the PyTorch DiTModel.__call__ signature
-        mlx_out = mlx_model(*mlx_inputs[:3])  # x, coords, modality
+        mlx_out = mlx_model(*mlx_inputs[:3])
         mx.eval(mlx_out)
-
-        # Convert back to PyTorch
         pt_out = mlx_to_torch(mlx_out)
 
-        # Process output through data proxy (PyTorch)
         noise_pred = data_proxy.process_output(pt_out)
-        v_video = noise_pred[0]
-        v_audio = noise_pred[1]
+        latent_video = scheduler.step_ddim(noise_pred[0], idx, latent_video)
+        latent_audio = scheduler.step_ddim(noise_pred[1], idx, latent_audio)
 
-        # Scheduler step
-        from diffusers.utils.torch_utils import randn_tensor
-        latent_video = scheduler.step_ddim(v_video, idx, latent_video)
-        latent_audio = scheduler.step_ddim(v_audio, idx, latent_audio)
+        print(f"  Step {idx+1}/{args.steps}: {time.time()-step_t0:.1f}s")
 
-        step_time = time.time() - step_t0
-        print(f"  Step {idx+1}/{args.steps}: {step_time:.1f}s")
-
-    # Final re-anchor: overwrite first frame with clean image latent
     latent_video[:, :, :1] = br_image[:, :, :1]
-
     t_denoise = time.time() - t_denoise_start
     print(f"  Total denoising: {t_denoise:.1f}s ({t_denoise/args.steps:.1f}s/step)")
 
+    # Free MLX DiT model (~30-61GB) before loading VAE decoder
+    del mlx_model; free_memory()
+    print("  MLX DiT freed from memory")
+
     # ====================================================================
-    # Step 5: Decode video with Wan2.2 VAE on MPS (5x faster than CPU)
+    # Step 5: Decode video (load Wan2.2 VAE on MPS, decode, free)
     # ====================================================================
     print("\n[5/6] Decoding video (Wan2.2 VAE on MPS)...")
     t0 = time.time()
 
-    # Use Wan2.2 VAE on MPS instead of Turbo VAE on CPU
-    # Wan2.2 on MPS: ~17s vs Turbo on CPU: ~40s
-    from inference.model.vae2_2.vae2_2_model import get_vae2_2
     mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-    vae_device = "mps" if mps_available else "cpu"
-    vae_decode = get_vae2_2(
-        os.path.join(config.evaluation_config.vae_model_path, "Wan2.2_VAE.pth"),
-        device=vae_device,
-    )
+    # Use CPU for high-res VAE decode (MPS OOMs at 720p+ due to large intermediates)
+    vae_pixels = br_width * br_height
+    vae_device = "cpu" if vae_pixels > 480 * 640 else ("mps" if mps_available else "cpu")
+    if vae_device == "cpu" and mps_available:
+        print(f"  Using CPU for VAE decode ({br_width}x{br_height} too large for MPS)")
+    vae_decode = get_vae2_2(vae_path, device=vae_device)
     videos = vae_decode.decode(latent_video.to(vae_device, dtype=torch.float32))
     videos = videos.float().cpu()
-    del vae_decode
-    import gc; gc.collect()
-    if mps_available:
-        torch.mps.empty_cache()
+    del vae_decode; free_memory()
 
     videos.mul_(0.5).add_(0.5).clamp_(0, 1)
     video_np = videos[0].permute(1, 2, 3, 0).numpy() * 255
     video_np = video_np.astype(np.uint8)
-    print(f"  Video frames: {video_np.shape}")  # Should be (T, H, W, 3)
+    del videos; free_memory()
+    print(f"  Video frames: {video_np.shape}, decoded in {time.time()-t0:.1f}s")
 
-    # Audio decode
+    # Audio decode (load Stable Audio VAE, decode, free)
+    from inference.model.sa_audio import SAAudioFeatureExtractor
+    audio_vae = SAAudioFeatureExtractor(device="cpu", model_path=config.evaluation_config.audio_model_path)
+    audio_sample_rate = audio_vae.sample_rate
     latent_audio_out = latent_audio.squeeze(0)
-    audio_output = evaluator.audio_vae.decode(latent_audio_out.T)
+    audio_output = audio_vae.decode(latent_audio_out.T)
     audio_np = audio_output.squeeze(0).T.cpu().numpy()
     from inference.pipeline.video_process import resample_audio_sinc
     audio_np = resample_audio_sinc(audio_np, 441 / 512)
-
-    print(f"  Decoded in {time.time()-t0:.1f}s")
+    del audio_vae; free_memory()
 
     # ====================================================================
     # Step 6: Save output with audio
@@ -281,58 +308,41 @@ def main():
     tmp_video = os.path.join(os.getcwd(), f"_tmp_vid_{uid}.mp4")
     tmp_audio = os.path.join(os.getcwd(), f"_tmp_aud_{uid}.wav")
 
-    # Find ffmpeg
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        # Common locations on macOS
         for path in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
             if os.path.exists(path):
                 ffmpeg = path
                 break
 
-    # Save temp video
     imageio.mimwrite(tmp_video, video_np, fps=fps, quality=8,
                      output_params=["-loglevel", "error"] if ffmpeg else [])
-
-    # Save temp audio
-    sf.write(tmp_audio, audio_np, evaluator.audio_vae.sample_rate)
+    sf.write(tmp_audio, audio_np, audio_sample_rate)
 
     if ffmpeg and os.path.exists(tmp_video) and os.path.exists(tmp_audio):
-        # Merge video + audio with ffmpeg
-        cmd = [
-            ffmpeg, "-y",
-            "-i", tmp_video,
-            "-i", tmp_audio,
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac",
-            "-shortest",
-            save_path,
-            "-loglevel", "error",
-        ]
+        cmd = [ffmpeg, "-y", "-i", tmp_video, "-i", tmp_audio,
+               "-map", "0:v:0", "-map", "1:a:0",
+               "-c:v", "copy", "-c:a", "aac", "-shortest",
+               save_path, "-loglevel", "error"]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
-            print(f"  Merged video + audio successfully")
+            print(f"  Merged video + audio")
         else:
-            print(f"  ffmpeg merge failed: {result.stderr}")
-            # Fallback: save video without audio
+            print(f"  ffmpeg failed: {result.stderr}")
             os.rename(tmp_video, save_path)
-
-        # Cleanup temp files
         for f in [tmp_video, tmp_audio]:
             if os.path.exists(f):
                 os.remove(f)
     else:
-        # No ffmpeg or temp files missing — save video only
         if os.path.exists(tmp_video):
             os.rename(tmp_video, save_path)
-        else:
-            imageio.mimwrite(save_path, video_np, fps=fps)
         if os.path.exists(tmp_audio):
             os.remove(tmp_audio)
-        print(f"  Saved video without audio (ffmpeg not found)")
+        print(f"  Saved video without audio")
 
+    total_time = time.time() - total_t0
     print(f"\nDone! Output: {save_path}")
-    print(f"Total time: denoising={t_denoise:.0f}s")
+    print(f"  Denoising: {t_denoise:.0f}s, Total: {total_time:.0f}s")
 
 
 if __name__ == "__main__":

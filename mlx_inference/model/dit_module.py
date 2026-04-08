@@ -404,6 +404,7 @@ class TransFormerLayer(nn.Module):
         if self.post_norm:
             attn_out = self.attn_post_norm(attn_out, modality_dispatcher=modality_dispatcher)
         hidden_states = hidden_states + attn_out
+        mx.eval(hidden_states)  # Force eval to free attention intermediates
 
         # MLP + residual
         mlp_out = self.mlp(hidden_states, modality_dispatcher)
