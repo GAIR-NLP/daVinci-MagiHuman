@@ -27,11 +27,7 @@ except ImportError:
     from inference.pipeline import MagiPipeline
 
 
-def infer_generation_mode(image_path: str | None, audio_path: str | None) -> str:
-    if audio_path and image_path:
-        return "ti2v + reference audio"
-    if audio_path:
-        return "t2v + reference audio"
+def infer_generation_mode(image_path: str | None) -> str:
     if image_path:
         return "ti2v"
     return "t2v"
@@ -48,7 +44,7 @@ def parse_arguments():
         "--audio_path",
         type=str,
         default=None,
-        help="Optional reference audio path for audio-conditioned generation.",
+        help="Optional reference audio path.",
     )
 
     # Optional runtime controls; forwarded to pipeline methods when provided.
@@ -96,7 +92,7 @@ def main():
         print_rank_0("Error: --prompt is required.")
         sys.exit(1)
 
-    print_rank_0(f"Running inference mode: {infer_generation_mode(image_path, audio_path)}")
+    print_rank_0(f"Running inference mode: {infer_generation_mode(image_path)}")
 
     pipeline.run_offline(
         prompt=prompt, image=image_path, audio=audio_path, save_path_prefix=save_path_prefix, **optional_kwargs

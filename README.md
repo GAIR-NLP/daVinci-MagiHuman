@@ -188,7 +188,6 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 
 - **T2V** — Provide `--prompt` only and omit `--image_path`.
 - **TI2V** — Provide both `--prompt` and `--image_path`.
-- If `--audio_path` is also provided, the pipeline runs in audio-conditioned mode on top of the selected T2V/TI2V setup.
 
 ### Example Scripts
 
