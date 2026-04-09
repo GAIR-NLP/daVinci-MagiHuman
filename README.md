@@ -189,7 +189,6 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 - **T2V** — Provide `--prompt` only and omit `--image_path`.
 - **TI2V** — Provide both `--prompt` and `--image_path`.
 - If `--audio_path` is also provided, the pipeline runs in audio-conditioned mode on top of the selected T2V/TI2V setup.
-- For backward compatibility, the existing `example/*/run.sh` scripts remain **TI2V** examples.
 
 ### Example Scripts
 
@@ -197,28 +196,24 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 ```bash
 bash example/base/run_T2V.sh   # T2V
 bash example/base/run_TI2V.sh  # TI2V
-bash example/base/run.sh       # legacy TI2V entry
 ```
 
 **Distilled Model (256p, 8 steps, no CFG)**
 ```bash
 bash example/distill/run_T2V.sh
 bash example/distill/run_TI2V.sh
-bash example/distill/run.sh
 ```
 
 **Super-Resolution to 540p**
 ```bash
 bash example/sr_540p/run_T2V.sh
 bash example/sr_540p/run_TI2V.sh
-bash example/sr_540p/run.sh
 ```
 
 **Super-Resolution to 1080p**
 ```bash
 bash example/sr_1080p/run_T2V.sh
 bash example/sr_1080p/run_TI2V.sh
-bash example/sr_1080p/run.sh
 ```
 
 ### CLI Mode Selection
