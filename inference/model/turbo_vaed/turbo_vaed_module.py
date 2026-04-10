@@ -929,7 +929,9 @@ class TurboVAED(ModelMixin, ConfigMixin):
         z_device = z.device
         scale = self.scale
         assert isinstance(scale[0], torch.Tensor), "scale[0] must be a tensor"
-        z = z / scale[1].view(1, self.z_dim, 1, 1, 1) + scale[0].view(1, self.z_dim, 1, 1, 1)
+        scale_mean = scale[0].to(z_device, dtype=z_dtype)
+        scale_inv_std = scale[1].to(z_device, dtype=z_dtype)
+        z = z / scale_inv_std.view(1, self.z_dim, 1, 1, 1) + scale_mean.view(1, self.z_dim, 1, 1, 1)
         z = z.to(z_dtype)
 
         first_chunk_size = self.first_chunk_size

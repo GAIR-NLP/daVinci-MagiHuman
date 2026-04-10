@@ -16,7 +16,7 @@ export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 # ---- Run inference (single process, no torchrun) ----
 python inference/pipeline/entry_mps.py \
-  --config-load-path example/distill/config.json \
+  --config-load-path example/distill/config_mps.json \
   --prompt "$(<example/assets/prompt.txt)" \
   --image_path example/assets/image.png \
   --seconds 4 \

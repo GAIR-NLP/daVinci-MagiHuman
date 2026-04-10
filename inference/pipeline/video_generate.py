@@ -328,7 +328,7 @@ class MagiEvaluator:
             else:
                 sr_image = None
             latent_video = torch.nn.functional.interpolate(
-                br_latent_video, size=(latent_length, sr_latent_height, sr_latent_width), mode="trilinear", align_corners=True
+                br_latent_video, size=(latent_length, sr_latent_height, sr_latent_width), mode="trilinear", align_corners=False
             )
             if self.noise_value != 0:
                 noise = torch.randn_like(latent_video, device="cpu").to(latent_video.device)
