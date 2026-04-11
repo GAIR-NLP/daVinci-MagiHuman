@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 export MASTER_ADDR="${MASTER_ADDR:-localhost}"
-export MASTER_PORT="${MASTER_PORT:-6010}"
+export MASTER_PORT="${MASTER_PORT:-6017}"
 export NNODES="${NNODES:-1}"
 export NODE_RANK="${NODE_RANK:-0}"
 export GPUS_PER_NODE="${GPUS_PER_NODE:-1}"
@@ -15,6 +15,7 @@ export WORLD_SIZE="$((GPUS_PER_NODE * NNODES))"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export NCCL_ALGO="${NCCL_ALGO:-^NVLS}"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
+export CPU_OFFLOAD=true
 
 DISTRIBUTED_ARGS="--nnodes=${NNODES} --node_rank=${NODE_RANK} --nproc_per_node=${GPUS_PER_NODE} --rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT}"
 
@@ -22,7 +23,7 @@ DISTRIBUTED_ARGS="--nnodes=${NNODES} --node_rank=${NODE_RANK} --nproc_per_node=$
 # RUNNING ON CONSUMER GPUs (e.g., RTX 5090)
 # ==============================================================================================
 # If you want to run this script on a consumer GPU, please follow these steps to avoid OOM errors:
-# 
+#
 # 1. Define MAGI_COMPILER_OFFLOAD_ARGS and append it to the `torchrun` command below.
 # 2. Update `engine_config.cp_size` in `config.json` to exactly match the number of GPUs on your machine.
 # 3. Depending on your NUMA node configuration, use `numactl` as a prefix to optimize memory bandwidth:
@@ -35,11 +36,12 @@ DISTRIBUTED_ARGS="--nnodes=${NNODES} --node_rank=${NODE_RANK} --nproc_per_node=$
 # ==============================================================================================
 
 torchrun ${DISTRIBUTED_ARGS} inference/pipeline/entry.py \
-  --config-load-path example/distill/config.json \
+  --config-load-path example/sr_540p/config.json \
   --prompt "$(<example/assets/prompt.txt)" \
-  --image_path example/assets/image.png \
   --seconds 4 \
   --br_width 448 \
   --br_height 256 \
-  --output_path "output_example_distill_$(date '+%Y%m%d_%H%M%S')" \
-  2>&1 | tee "log_example_distill_$(date '+%Y%m%d_%H%M%S').log"
+  --sr_width 896 \
+  --sr_height 512 \
+  --output_path "output_example_sr_540p_t2v_$(date '+%Y%m%d_%H%M%S')" \
+  2>&1 | tee "log_example_sr_540p_t2v_$(date '+%Y%m%d_%H%M%S').log"

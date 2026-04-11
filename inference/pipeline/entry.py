@@ -27,15 +27,24 @@ except ImportError:
     from inference.pipeline import MagiPipeline
 
 
+def infer_generation_mode(image_path: str | None) -> str:
+    if image_path:
+        return "ti2v"
+    return "t2v"
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run DiT pipeline with unified offline entry.")
-    parser.add_argument("--prompt", type=str)
+    parser.add_argument("--prompt", type=str, help="Prompt text for generation.")
     parser.add_argument("--save_path_prefix", type=str, help="Path prefix for saving outputs.")
     parser.add_argument("--output_path", type=str, help="Alias of --save_path_prefix for MAGI-style CLI.")
 
-    parser.add_argument("--image_path", type=str, help="Path to image for i2v mode.")
+    parser.add_argument("--image_path", type=str, help="Optional reference image path for ti2v mode; omit for t2v.")
     parser.add_argument(
-        "--audio_path", type=str, default=None, help="Path to optional audio for lipsync mode; omit to use i2v or t2v"
+        "--audio_path",
+        type=str,
+        default=None,
+        help="Optional reference audio path.",
     )
 
     # Optional runtime controls; forwarded to pipeline methods when provided.
@@ -82,9 +91,8 @@ def main():
     if not prompt:
         print_rank_0("Error: --prompt is required.")
         sys.exit(1)
-    if not image_path:
-        print_rank_0("Error: --image_path is required.")
-        sys.exit(1)
+
+    print_rank_0(f"Running inference mode: {infer_generation_mode(image_path)}")
 
     pipeline.run_offline(
         prompt=prompt, image=image_path, audio=audio_path, save_path_prefix=save_path_prefix, **optional_kwargs

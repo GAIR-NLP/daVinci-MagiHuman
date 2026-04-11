@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 export MASTER_ADDR="${MASTER_ADDR:-localhost}"
-export MASTER_PORT="${MASTER_PORT:-6009}"
+export MASTER_PORT="${MASTER_PORT:-6015}"
 export NNODES="${NNODES:-1}"
 export NODE_RANK="${NODE_RANK:-0}"
 export GPUS_PER_NODE="${GPUS_PER_NODE:-1}"
@@ -22,7 +22,7 @@ DISTRIBUTED_ARGS="--nnodes=${NNODES} --node_rank=${NODE_RANK} --nproc_per_node=$
 # RUNNING ON CONSUMER GPUs (e.g., RTX 5090)
 # ==============================================================================================
 # If you want to run this script on a consumer GPU, please follow these steps to avoid OOM errors:
-# 
+#
 # 1. Define MAGI_COMPILER_OFFLOAD_ARGS and append it to the `torchrun` command below.
 # 2. Update `engine_config.cp_size` in `config.json` to exactly match the number of GPUs on your machine.
 # 3. Depending on your NUMA node configuration, use `numactl` as a prefix to optimize memory bandwidth:
@@ -35,11 +35,10 @@ DISTRIBUTED_ARGS="--nnodes=${NNODES} --node_rank=${NODE_RANK} --nproc_per_node=$
 # ==============================================================================================
 
 torchrun ${DISTRIBUTED_ARGS} inference/pipeline/entry.py \
-  --config-load-path example/base/config.json \
+  --config-load-path example/distill/config.json \
   --prompt "$(<example/assets/prompt.txt)" \
-  --image_path example/assets/image.png \
   --seconds 4 \
   --br_width 448 \
   --br_height 256 \
-  --output_path "output_example_base_$(date '+%Y%m%d_%H%M%S')" \
-  2>&1 | tee "log_example_base_$(date '+%Y%m%d_%H%M%S').log"
+  --output_path "output_example_distill_t2v_$(date '+%Y%m%d_%H%M%S')" \
+  2>&1 | tee "log_example_distill_t2v_$(date '+%Y%m%d_%H%M%S').log"

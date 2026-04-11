@@ -57,7 +57,7 @@ https://github.com/user-attachments/assets/c6cc056f-56ca-4285-80f3-bb6052228d23
 <img src="assets/architecture.png" width="90%">
 </div>
 
-daVinci-MagiHuman uses a single-stream Transformer that takes text tokens, a reference image latent, and noisy video and audio tokens as input, and jointly denoises the video and audio within a unified token sequence.
+daVinci-MagiHuman uses a single-stream Transformer that takes text tokens, an optional reference image latent, and noisy video and audio tokens as input, and jointly denoises the video and audio within a unified token sequence.
 
 Key design choices:
 
@@ -184,25 +184,42 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 
 > **Note:** The first run will be slower due to model compilation and cache warmup. Subsequent runs will match the reported inference speeds.
 
+### Input Modes
+
+- **T2V** — Provide `--prompt` only and omit `--image_path`.
+- **TI2V** — Provide both `--prompt` and `--image_path`.
+
+### Example Scripts
+
 **Base Model (256p)**
 ```bash
-bash example/base/run.sh
+bash example/base/run_T2V.sh   # T2V
+bash example/base/run_TI2V.sh  # TI2V
 ```
 
 **Distilled Model (256p, 8 steps, no CFG)**
 ```bash
-bash example/distill/run.sh
+bash example/distill/run_T2V.sh
+bash example/distill/run_TI2V.sh
 ```
 
 **Super-Resolution to 540p**
 ```bash
-bash example/sr_540p/run.sh
+bash example/sr_540p/run_T2V.sh
+bash example/sr_540p/run_TI2V.sh
 ```
 
 **Super-Resolution to 1080p**
 ```bash
-bash example/sr_1080p/run.sh
+bash example/sr_1080p/run_T2V.sh
+bash example/sr_1080p/run_TI2V.sh
 ```
+
+### CLI Mode Selection
+
+- If `--image_path` is omitted, `inference/pipeline/entry.py` runs **T2V**.
+- If `--image_path` is provided, `inference/pipeline/entry.py` runs **TI2V**.
+- The T2V and TI2V scripts under the same example directory reuse the same checkpoint/config stack. The only difference is whether `--image_path` is passed.
 
 ## ✍️ Prompt Guidance
  
