@@ -737,7 +737,9 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         device = curr_state.device
         curr_t = self.sigmas[t]
         prev_t = self.sigmas[t + 1]
-        variance_noise = randn_tensor(curr_state.shape, generator=generator, device=device, dtype=curr_state.dtype)
+        # Generate noise on CPU then move to device (MPS randn can produce
+        # subtly different distributions that compound over denoising steps)
+        variance_noise = randn_tensor(curr_state.shape, generator=generator, device="cpu", dtype=curr_state.dtype).to(device)
         cur_clean_ = curr_state - curr_t * velocity
         prev_state = prev_t * variance_noise + (1 - prev_t) * cur_clean_
 
@@ -776,7 +778,7 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         std_dev_t = prev_t * sin
         std_dev_t = torch.ones((1, 1)).to(curr_state) * std_dev_t
         if prev_state is None:
-            variance_noise = randn_tensor(curr_state.shape, generator=generator, device=device, dtype=curr_state.dtype)
+            variance_noise = randn_tensor(curr_state.shape, generator=generator, device="cpu", dtype=curr_state.dtype).to(device)
             prev_state = prev_sample_mean + std_dev_t * variance_noise
         else:
             prev_state = prev_sample_mean + (prev_state - prev_sample_mean.detach())

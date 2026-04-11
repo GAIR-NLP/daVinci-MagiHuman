@@ -20,8 +20,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
+from inference.device_utils import get_device, is_mps, is_cpu
 
 __all__ = ["Wan2_2_VAE"]
+
+
+def _maybe_compile(fn):
+    """Decorator replacement for @torch.compile that skips when not on CUDA."""
+    if not torch.cuda.is_available():
+        return fn
+    return torch.compile(fn)
 
 CACHE_T = 2
 
@@ -246,7 +254,7 @@ class CausalConv3d(nn.Conv3d):
         self._padding = (self.padding[2], self.padding[2], self.padding[1], self.padding[1], 2 * self.padding[0], 0)
         self.padding = (0, 0, 0)
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x, cache_x=None, group: torch.distributed.ProcessGroup = None):
         padding = list(self._padding)
         if cache_x is not None and self._padding[4] > 0:
@@ -274,13 +282,13 @@ class RMS_norm(nn.Module):
         self.gamma = nn.Parameter(torch.ones(shape))
         self.bias = nn.Parameter(torch.zeros(shape)) if bias else 0.0
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x):
         return F.normalize(x, dim=(1 if self.channel_first else -1)) * self.scale * self.gamma + self.bias
 
 
 class Upsample(nn.Upsample):
-    @torch.compile
+    @_maybe_compile
     def forward(self, x):
         """
         Fix bfloat16 support for nearest neighbor interpolation.
@@ -315,7 +323,7 @@ class Resample(nn.Module):
         else:
             self.resample = nn.Identity()
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x, feat_cache=None, feat_idx=[0], group: torch.distributed.ProcessGroup = None):
         if one_plus_world_size(group):
             if self.mode in ["upsample3d", "upsample2d"]:
@@ -417,7 +425,7 @@ class ResidualBlock(nn.Module):
         self.shortcut = CausalConv3d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
 
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x, feat_cache=None, feat_idx=[0], group: torch.distributed.ProcessGroup = None):
         if one_plus_world_size(group):
             overlap_size = 2
@@ -458,7 +466,7 @@ class AttentionBlock(nn.Module):
         # zero out the last layer params
         nn.init.zeros_(self.proj.weight)
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x):
         identity = x
         b, c, t, h, w = x.size()
@@ -514,7 +522,7 @@ class AvgDown3D(nn.Module):
         assert in_channels * self.factor % out_channels == 0
         self.group_size = in_channels * self.factor // out_channels
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         pad_t = (self.factor_t - x.shape[2] % self.factor_t) % self.factor_t
         pad = (0, 0, 0, 0, pad_t, 0)
@@ -543,7 +551,7 @@ class DupUp3D(nn.Module):
         assert out_channels * self.factor % in_channels == 0
         self.repeats = out_channels * self.factor // in_channels
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x: torch.Tensor, first_chunk=False) -> torch.Tensor:
         x = x.repeat_interleave(self.repeats, dim=1)
         x = x.view(x.size(0), self.out_channels, self.factor_t, self.factor_s, self.factor_s, x.size(2), x.size(3), x.size(4))
@@ -578,7 +586,7 @@ class Down_ResidualBlock(nn.Module):
 
         self.downsamples = nn.Sequential(*downsamples)
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x, feat_cache=None, feat_idx=[0]):
         x_copy = x.clone()
         for module in self.downsamples:
@@ -609,7 +617,7 @@ class Up_ResidualBlock(nn.Module):
 
         self.upsamples = nn.Sequential(*upsamples)
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x, feat_cache=None, feat_idx=[0], first_chunk=False, group: torch.distributed.ProcessGroup = None):
         x_main = x.clone()
         for module in self.upsamples:
@@ -672,7 +680,7 @@ class Encoder3d(nn.Module):
         # # output blocks
         self.head = nn.Sequential(RMS_norm(out_dim, images=False), nn.SiLU(), CausalConv3d(out_dim, z_dim, 3, padding=1))
 
-    @torch.compile
+    @_maybe_compile
     def forward(self, x, feat_cache=None, feat_idx=[0]):
         if feat_cache is not None:
             idx = feat_idx[0]
@@ -947,7 +955,7 @@ class Wan2_2_VAE:
         dim_mult=[1, 2, 4, 4],
         temperal_downsample=[False, True, True],
         dtype=torch.float,
-        device="cuda",
+        device=get_device(),
     ):
         self.dtype = dtype
         self.device = device

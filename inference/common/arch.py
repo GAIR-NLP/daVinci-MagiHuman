@@ -12,24 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-
-
-def is_hopper_arch():
-    return torch.cuda.get_device_capability()[0] == 9
-
-
-def get_arch_memory(unit: str = "GB"):
-    if not torch.cuda.is_available():
-        return 0
-    total_bytes = torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory
-    if unit == "B":
-        return float(total_bytes)
-    elif unit == "KB":
-        return total_bytes / 1024
-    elif unit == "MB":
-        return total_bytes / 1024 / 1024
-    elif unit == "GB":
-        return total_bytes / 1024 / 1024 / 1024
-    else:
-        raise ValueError(f"Invalid unit: {unit}")
+from inference.device_utils import is_hopper_arch, get_arch_memory  # noqa: F401

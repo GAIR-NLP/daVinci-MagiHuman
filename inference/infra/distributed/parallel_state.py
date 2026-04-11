@@ -481,7 +481,7 @@ def get_dp_group(with_context_parallel=False):
 
 def get_cp_group(check_initialized=True):
     """Get the context parallel group the caller rank belongs to."""
-    if check_initialized:
+    if check_initialized and torch.distributed.is_available() and torch.distributed.is_initialized():
         assert _CONTEXT_PARALLEL_GROUP is not None, "context parallel group is not initialized"
     return _CONTEXT_PARALLEL_GROUP
 
@@ -494,22 +494,30 @@ def get_cp_extra_group(check_initialized=True):
 
 def get_tp_world_size(with_context_parallel=False):
     """Return world size for the tensor model parallel group."""
-    return torch.distributed.get_world_size(group=get_tp_group(with_context_parallel=with_context_parallel))
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_world_size(group=get_tp_group(with_context_parallel=with_context_parallel))
+    return 1
 
 
 def get_pp_world_size():
     """Return world size for the pipeline model parallel group."""
-    return torch.distributed.get_world_size(group=get_pp_group())
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_world_size(group=get_pp_group())
+    return 1
 
 
 def get_tp_rank(with_context_parallel=False):
     """Return my rank for the tensor model parallel group."""
-    return torch.distributed.get_rank(group=get_tp_group(with_context_parallel=with_context_parallel))
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_rank(group=get_tp_group(with_context_parallel=with_context_parallel))
+    return 0
 
 
 def get_pp_rank():
     """Return my rank for the pipeline model parallel group."""
-    return torch.distributed.get_rank(group=get_pp_group())
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_rank(group=get_pp_group())
+    return 0
 
 
 def is_pipeline_first_stage():
@@ -596,7 +604,7 @@ def get_dp_world_size(with_context_parallel=False):
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         return torch.distributed.get_world_size(group=get_dp_group(with_context_parallel=with_context_parallel))
     else:
-        return 0
+        return 1
 
 
 def get_dp_rank(with_context_parallel=False):
@@ -612,7 +620,7 @@ def get_cp_world_size():
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         return torch.distributed.get_world_size(group=get_cp_group())
     else:
-        return 0
+        return 1
 
 
 def get_cp_rank():

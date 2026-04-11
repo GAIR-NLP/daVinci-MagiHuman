@@ -22,11 +22,41 @@ import torch.nn as nn
 from einops import rearrange, repeat
 from inference.common import Modality, VarlenHandler, is_hopper_arch
 from inference.infra.parallelism import ulysses_scheduler
-from magi_compiler import magi_compile
-from magi_compiler.api import magi_register_custom_op
-from magi_compiler.config import CompileConfig
+from inference.device_utils import get_device, get_dtype, safe_dtype, is_mps, is_cuda
 from torch import Tensor
 from torch.nn import Parameter
+
+# MagiCompiler — optional (CUDA-only graph optimizer)
+try:
+    from magi_compiler import magi_compile
+    from magi_compiler.api import magi_register_custom_op
+    from magi_compiler.config import CompileConfig
+    HAS_MAGI_COMPILER = True
+except ImportError:
+    HAS_MAGI_COMPILER = False
+    print("[dit_module] MagiCompiler not found, running without graph optimization (~20% slower on CUDA)")
+
+    # Provide no-op stubs so decorated functions still work
+    def magi_compile(model=None, *args, **kwargs):
+        """No-op replacement: works both as @magi_compile and @magi_compile(config_patch=...)."""
+        if model is not None and callable(model) and not kwargs:
+            # Used as @magi_compile (without arguments)
+            return model
+        # Used as @magi_compile(config_patch=...) — return a decorator
+        def decorator(cls_or_fn):
+            return cls_or_fn
+        if model is not None and callable(model):
+            return model
+        return decorator
+
+    def magi_register_custom_op(name=None, mutates_args=(), infer_output_meta_fn=None, is_subgraph_boundary=False, **kwargs):
+        """No-op decorator that just returns the function unchanged."""
+        def decorator(fn):
+            return fn
+        return decorator
+
+    class CompileConfig:
+        pass
 
 
 @dataclass
@@ -287,6 +317,11 @@ class MultiModalityRMSNorm(nn.Module):
         return (t * (self.weight + 1)).to(original_dtype)
 
 
+def _get_compute_dtype() -> torch.dtype:
+    """Return the best compute dtype for the current device."""
+    return get_dtype()
+
+
 class _BF16ComputeLinear(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -295,8 +330,10 @@ class _BF16ComputeLinear(torch.autograd.Function):
         weight: torch.Tensor,
         bias: Optional[torch.Tensor],
         output_dtype: Optional[torch.dtype],
-        compute_dtype: torch.dtype = torch.bfloat16,
+        compute_dtype: torch.dtype = None,
     ):
+        if compute_dtype is None:
+            compute_dtype = _get_compute_dtype()
         # Convert input to specified input data type
         input_cast = input.to(compute_dtype)
         # Convert weight to computation data type
@@ -327,7 +364,7 @@ class BaseLinear(nn.Module):
         self, in_features, out_features, num_layers_for_initialization, num_experts, bias=True, device=None, dtype=None
     ):
         super().__init__()
-        factory_kwargs = {"device": device, "dtype": torch.bfloat16}
+        factory_kwargs = {"device": device, "dtype": get_dtype()}
         self.in_features = in_features
         self.out_features = out_features
         self.num_layers_for_initialization = num_layers_for_initialization
@@ -346,7 +383,12 @@ class BaseLinear(nn.Module):
         modality_dispatcher: Optional[ModalityDispatcher] = None,
     ) -> torch.Tensor:
         output_dtype = input.dtype if output_dtype is None else output_dtype
-        return _BF16ComputeLinear.apply(input, self.weight, self.bias, output_dtype, torch.bfloat16)
+        # Skip autograd.Function overhead during inference
+        compute_dtype = _get_compute_dtype()
+        output = torch.matmul(input.to(compute_dtype), self.weight.to(compute_dtype).t())
+        if self.bias is not None:
+            output = output + self.bias.to(compute_dtype)
+        return output.to(output_dtype)
 
 
 class NativeMoELinear(BaseLinear):
@@ -357,21 +399,25 @@ class NativeMoELinear(BaseLinear):
         modality_dispatcher: Optional[ModalityDispatcher] = None,
     ) -> torch.Tensor:
         output_dtype = input.dtype if output_dtype is None else output_dtype
+        compute_dtype = _get_compute_dtype()
 
+        # Dispatch on input device, per-expert matmul on weight device (may be MPS)
         input_list = modality_dispatcher.dispatch(input)  # type: ignore
         weight_chunked = self.weight.chunk(self.num_experts, dim=0)
-
-        if self.bias is not None:
-            bias_chunked = self.bias.chunk(self.num_experts, dim=0)
+        bias_chunked = self.bias.chunk(self.num_experts, dim=0) if self.bias is not None else [None] * self.num_experts
+        weight_device = self.weight.device
 
         for i in range(self.num_experts):
-            input_list[i] = _BF16ComputeLinear.apply(
-                input_list[i],
-                weight_chunked[i],
-                bias_chunked[i] if self.bias is not None else None,
-                output_dtype,
-                torch.bfloat16,
-            )
+            xi = input_list[i]
+            # Move to weight device for matmul (MPS acceleration)
+            if xi.device != weight_device:
+                xi = xi.to(weight_device)
+            xi = _BF16ComputeLinear.apply(xi, weight_chunked[i], bias_chunked[i], output_dtype, compute_dtype)
+            # Move back to input device for undispatch
+            if xi.device != input.device:
+                xi = xi.to(input.device)
+            input_list[i] = xi
+
         return modality_dispatcher.undispatch(*input_list)  # type: ignore
 
 
@@ -392,12 +438,17 @@ HAS_FA3 = importlib.util.find_spec("flash_attn_interface") is not None
 def flash_attn_func(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
     if HAS_FA3 and is_hopper_arch():
         from flash_attn_interface import flash_attn_func as fa3_flash_attn_func
-
         return fa3_flash_attn_func(query, key, value)
-    else:
-        from flash_attn.flash_attn_interface import flash_attn_func as fa2_flash_attn_func
 
+    try:
+        from flash_attn.flash_attn_interface import flash_attn_func as fa2_flash_attn_func
         return fa2_flash_attn_func(query, key, value)
+    except ImportError:
+        pass
+
+    # SDPA fallback (MPS / CPU / no flash_attn installed)
+    from inference.attention_compat import flash_attn_func as compat_flash_attn_func
+    return compat_flash_attn_func(query, key, value)
 
 
 def _split_q_range_with_no_overlap(
@@ -427,14 +478,14 @@ def _flash_attn_with_correction(
     output = torch.zeros_like(query)
     output_lse = torch.zeros((query.shape[0], query.shape[1]), dtype=torch.float32, device=query.device)
 
-    from flash_attn.flash_attn_interface import flash_attn_func
+    from inference.attention_compat import flash_attn_func as _compat_fa_func
 
     for q_range, k_ranges in zip(q_ranges, k_range_list):
         q_start, q_end = q_range
         qo_out, qo_lse = None, None
         for k_range in k_ranges:
             k_start, k_end = k_range
-            cur_qo_out, cur_qo_lse, _ = flash_attn_func(
+            cur_qo_out, cur_qo_lse, _ = _compat_fa_func(
                 query[q_start:q_end].unsqueeze(0),
                 key[k_start:k_end].unsqueeze(0),
                 value[k_start:k_end].unsqueeze(0),
@@ -504,7 +555,7 @@ def _attention_with_cp_infer_output_meta(q: torch.Tensor, *args, **kwargs) -> to
     is_subgraph_boundary=True,
 )
 def flash_attn_with_cp(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, cp_split_sizes: List[int]) -> torch.Tensor:
-    q, k, v = q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16)
+    q, k, v = q.to(get_dtype()), k.to(get_dtype()), v.to(get_dtype())
 
     from inference.infra.distributed import get_cp_group, get_cp_world_size
     from inference.infra.parallelism.all_to_all_primitive import batch_scatter_head_gather_seqlen, scatter_seqlen_gather_head
@@ -515,7 +566,10 @@ def flash_attn_with_cp(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, cp_spl
         k = k.unsqueeze(0)
         v = v.unsqueeze(0)
 
-    self_attn_out = torch.ops.infra.flash_attn_func(q, k, v).squeeze(0)
+    if HAS_MAGI_COMPILER:
+        self_attn_out = torch.ops.infra.flash_attn_func(q, k, v).squeeze(0)
+    else:
+        self_attn_out = flash_attn_func(q, k, v).squeeze(0)
 
     if get_cp_world_size() > 1:
         self_attn_out = scatter_seqlen_gather_head(self_attn_out, cp_split_sizes, get_cp_group(), async_op=False)
@@ -538,7 +592,7 @@ def flex_flash_attn_with_cp(
     k_ranges: torch.Tensor,
     cp_split_sizes: List[int],
 ) -> torch.Tensor:
-    q, k, v = q.to(torch.bfloat16).squeeze(0), k.to(torch.bfloat16).squeeze(0), v.to(torch.bfloat16).squeeze(0)
+    q, k, v = q.to(get_dtype()).squeeze(0), k.to(get_dtype()).squeeze(0), v.to(get_dtype()).squeeze(0)
 
     from inference.infra.distributed import get_cp_group, get_cp_world_size
     from inference.infra.parallelism.all_to_all_primitive import batch_scatter_head_gather_seqlen, scatter_seqlen_gather_head
@@ -546,7 +600,10 @@ def flex_flash_attn_with_cp(
     if get_cp_world_size() > 1:
         q, k, v = batch_scatter_head_gather_seqlen([q, k, v], cp_split_sizes, get_cp_group())
 
-    out, _ = torch.ops.infra.flex_flash_attn_func(q, k, v, q_ranges=q_ranges, k_ranges=k_ranges)
+    if HAS_MAGI_COMPILER:
+        out, _ = torch.ops.infra.flex_flash_attn_func(q, k, v, q_ranges=q_ranges, k_ranges=k_ranges)
+    else:
+        out, _ = flex_flash_attn_func(q, k, v, q_ranges=q_ranges, k_ranges=k_ranges)
 
     if get_cp_world_size() > 1:
         out = scatter_seqlen_gather_head(out, cp_split_sizes, get_cp_group(), async_op=False)
@@ -616,8 +673,22 @@ class Attention(torch.nn.Module):
         modality_dispatcher: ModalityDispatcher,
         cp_split_sizes: List[int],
     ) -> torch.Tensor:
-        hidden_states = self.pre_norm(hidden_states, modality_dispatcher=modality_dispatcher).to(torch.bfloat16)
-        qkv: torch.Tensor = self.linear_qkv(hidden_states, modality_dispatcher=modality_dispatcher).to(torch.float32)
+        # Model runs on CPU. Use MPS for the linear layers (they're on MPS).
+        from inference.device_utils import get_mps_device
+        _mps = get_mps_device()
+        _is_single = not hasattr(self.linear_qkv, 'num_experts') or self.linear_qkv.num_experts == 1
+
+        hidden_states = self.pre_norm(hidden_states, modality_dispatcher=modality_dispatcher).to(get_dtype())
+        if _mps:
+            if _is_single:
+                qkv = self.linear_qkv(hidden_states.to(_mps)).to(torch.float32).cpu()
+            else:
+                # Multi-expert: need ModalityDispatcher on MPS for dispatch/undispatch
+                md_mps = ModalityDispatcher(modality_dispatcher.modality_mapping.to(_mps),
+                                             modality_dispatcher.num_modalities)
+                qkv = self.linear_qkv(hidden_states.to(_mps), modality_dispatcher=md_mps).to(torch.float32).cpu()
+        else:
+            qkv = self.linear_qkv(hidden_states, modality_dispatcher=modality_dispatcher).to(torch.float32)
 
         q, k, v, g = torch.split(qkv, [self.q_size, self.kv_size, self.kv_size, self.gating_size], dim=1)
         q = q.view(-1, self.config.num_heads_q, self.config.head_dim)
@@ -636,19 +707,35 @@ class Attention(torch.nn.Module):
         q = apply_rotary_emb_torch(q, cos_emb, sin_emb)
         k = apply_rotary_emb_torch(k, cos_emb, sin_emb)
 
+        # Move q, k, v to MPS for the expensive SDPA computation
+        if _mps:
+            q, k, v = q.to(_mps), k.to(_mps), v.to(_mps)
+
         if self.config.use_local_attn:
             self_attn_out = flex_flash_attn_with_cp(
                 q, k, v, local_attn_handler.q_ranges, local_attn_handler.k_ranges, cp_split_sizes
             )
         else:
             self_attn_out = flash_attn_with_cp(q, k, v, cp_split_sizes)
+
+        # Move back to CPU for post-attention ops
+        if _mps:
+            self_attn_out = self_attn_out.cpu()
         self_attn_out = ModalityDispatcher.permute(self_attn_out, permute_mapping)
 
         if self.config.enable_attn_gating:
             self_attn_out = self_attn_out * torch.sigmoid(g)
 
-        self_attn_out = self_attn_out.view(-1, self.config.num_heads_q * self.config.head_dim).to(torch.bfloat16)
-        out = self.linear_proj(self_attn_out, modality_dispatcher=modality_dispatcher)
+        self_attn_out = self_attn_out.view(-1, self.config.num_heads_q * self.config.head_dim).to(get_dtype())
+        if _mps:
+            if _is_single:
+                out = self.linear_proj(self_attn_out.to(_mps)).cpu()
+            else:
+                md_mps = ModalityDispatcher(modality_dispatcher.modality_mapping.to(_mps),
+                                             modality_dispatcher.num_modalities)
+                out = self.linear_proj(self_attn_out.to(_mps), modality_dispatcher=md_mps).cpu()
+        else:
+            out = self.linear_proj(self_attn_out, modality_dispatcher=modality_dispatcher)
         return out
 
 
@@ -691,9 +778,9 @@ class MLP(torch.nn.Module):
         self.activation_func = create_activation_func(config.activation_type)
 
     def forward(self, x: torch.Tensor, modality_dispatcher: ModalityDispatcher) -> torch.Tensor:
-        x = self.pre_norm(x, modality_dispatcher=modality_dispatcher).to(torch.bfloat16)
+        x = self.pre_norm(x, modality_dispatcher=modality_dispatcher).to(get_dtype())
         x = self.up_gate_proj(x, modality_dispatcher=modality_dispatcher).to(torch.float32)
-        x = self.activation_func(x).to(torch.bfloat16)
+        x = self.activation_func(x).to(get_dtype())
         x = self.down_proj(x, modality_dispatcher=modality_dispatcher).to(torch.float32)
         return x
 
@@ -779,6 +866,10 @@ class TransFormerLayer(torch.nn.Module):
             self.attn_post_norm = MultiModalityRMSNorm(config.hidden_size, num_modality=num_modality)
             self.mlp_post_norm = MultiModalityRMSNorm(config.hidden_size, num_modality=num_modality)
 
+    def _is_single_expert(self):
+        """Single-expert layers (4-35) can safely use MPS for MLP + linears."""
+        return not hasattr(self.mlp.up_gate_proj, 'num_experts') or self.mlp.up_gate_proj.num_experts == 1
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -804,7 +895,16 @@ class TransFormerLayer(torch.nn.Module):
             attn_out = self.attn_post_norm(attn_out, modality_dispatcher=modality_dispatcher)
         hidden_states = hidden_states + attn_out
 
-        mlp_out = self.mlp(hidden_states, modality_dispatcher)
+        # MPS acceleration for single-expert MLP (layers 4-35)
+        from inference.device_utils import get_mps_device
+        _mps = get_mps_device() if self._is_single_expert() else None
+        if _mps:
+            hidden_states_mps = hidden_states.to(_mps)
+            md_mps = ModalityDispatcher(modality_dispatcher.modality_mapping.to(_mps),
+                                         modality_dispatcher.num_modalities)
+            mlp_out = self.mlp(hidden_states_mps, md_mps).cpu()
+        else:
+            mlp_out = self.mlp(hidden_states, modality_dispatcher)
         if self.post_norm:
             mlp_out = self.mlp_post_norm(mlp_out, modality_dispatcher=modality_dispatcher)
         hidden_states = hidden_states + mlp_out

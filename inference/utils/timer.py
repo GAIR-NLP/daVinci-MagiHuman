@@ -56,11 +56,12 @@ class EventPathTimer:
         Args:
             message (str): A message to log along with the current time.
 
-        This method synchronizes the CUDA operations, records the current time,
+        This method synchronizes GPU operations, records the current time,
         and calculates the elapsed time since the last recorded message, if any.
         It then logs the elapsed time along with the previous and current messages.
         """
-        torch.cuda.synchronize()
+        from inference.device_utils import synchronize
+        synchronize()
         current_time = datetime.now()
         if self.prev_message is not None:
             print_fn(

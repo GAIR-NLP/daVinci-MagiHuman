@@ -18,6 +18,7 @@ from datetime import timedelta
 import torch
 
 from inference.common import parse_config
+from inference.device_utils import get_device_count, set_device, is_cuda
 
 from .parallel_state import initialize_model_parallel, model_parallel_is_initialized
 from inference.utils import print_rank_0
@@ -27,7 +28,7 @@ def initialize_distributed():
     """Initialize torch.distributed and core model parallel."""
     config = parse_config()
 
-    device_count = torch.cuda.device_count()
+    device_count = get_device_count()
     if torch.distributed.is_initialized():
         if torch.distributed.get_rank() == 0:
             print_rank_0("> torch distributed already initialized, skipping initialization ...")
@@ -37,12 +38,18 @@ def initialize_distributed():
         if rank == 0:
             print_rank_0("> initializing torch distributed ...")
         # Manually set the device ids.
-        if device_count > 0:
+        if device_count > 0 and is_cuda():
             device = rank % device_count
-            torch.cuda.set_device(device)
+            set_device(device)
+
+        # Choose backend: nccl for CUDA, gloo for everything else
+        backend = config.engine_config.distributed_backend
+        if not is_cuda() and backend == "nccl":
+            backend = "gloo"
+
         # Call the init process
         torch.distributed.init_process_group(
-            backend=config.engine_config.distributed_backend,
+            backend=backend,
             world_size=world_size,
             rank=rank,
             timeout=timedelta(minutes=config.engine_config.distributed_timeout_minutes),
