@@ -18,11 +18,27 @@ export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 export CPU_OFFLOAD=true
 
 DISTRIBUTED_ARGS="--nnodes=${NNODES} --node_rank=${NODE_RANK} --nproc_per_node=${GPUS_PER_NODE} --rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT}"
+PROMPT_PATH="${PROMPT_PATH:-example/assets/prompt.txt}"
+IMAGE_PATH="${IMAGE_PATH:-example/assets/image.png}"
 AUDIO_PATH="${AUDIO_PATH:-example/assets/audio.wav}"
+BR_WIDTH="${BR_WIDTH:-448}"
+BR_HEIGHT="${BR_HEIGHT:-256}"
+SR_WIDTH="${SR_WIDTH:-896}"
+SR_HEIGHT="${SR_HEIGHT:-512}"
+
+if [[ ! -f "${PROMPT_PATH}" ]]; then
+  echo "Error: PROMPT_PATH does not exist: ${PROMPT_PATH}" >&2
+  exit 1
+fi
+
+if [[ ! -f "${IMAGE_PATH}" ]]; then
+  echo "Error: IMAGE_PATH does not exist: ${IMAGE_PATH}" >&2
+  exit 1
+fi
 
 if [[ ! -f "${AUDIO_PATH}" ]]; then
   echo "Error: AUDIO_PATH does not exist: ${AUDIO_PATH}" >&2
-  echo "Set AUDIO_PATH=/path/to/audio.wav before running run_TIA2V.sh." >&2
+  echo "Edit AUDIO_PATH in this script or set AUDIO_PATH=/path/to/audio.wav before running run_TIA2V.sh." >&2
   exit 1
 fi
 
@@ -44,13 +60,13 @@ fi
 
 torchrun ${DISTRIBUTED_ARGS} inference/pipeline/entry.py \
   --config-load-path example/sr_540p/config.json \
-  --prompt "$(<example/assets/prompt.txt)" \
-  --image_path example/assets/image.png \
+  --prompt "$(<"${PROMPT_PATH}")" \
+  --image_path "${IMAGE_PATH}" \
   --audio_path "${AUDIO_PATH}" \
   --seconds 4 \
-  --br_width 448 \
-  --br_height 256 \
-  --sr_width 896 \
-  --sr_height 512 \
-  --output_path "output_example_sr_540p_tia2v_$(date '+%Y%m%d_%H%M%S')" \
-  2>&1 | tee "log_example_sr_540p_tia2v_$(date '+%Y%m%d_%H%M%S').log"
+  --br_width "${BR_WIDTH}" \
+  --br_height "${BR_HEIGHT}" \
+  --sr_width "${SR_WIDTH}" \
+  --sr_height "${SR_HEIGHT}" \
+  --output_path "output_example_sr_540p_tia2v_${BR_WIDTH}x${BR_HEIGHT}_${SR_WIDTH}x${SR_HEIGHT}_$(date '+%Y%m%d_%H%M%S')" \
+  2>&1 | tee "log_example_sr_540p_tia2v_${BR_WIDTH}x${BR_HEIGHT}_${SR_WIDTH}x${SR_HEIGHT}_$(date '+%Y%m%d_%H%M%S').log"
