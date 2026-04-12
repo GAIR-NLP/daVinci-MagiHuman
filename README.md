@@ -186,6 +186,8 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 
 ### Input Modes
 
+- **TIA2V** 鈥?Provide `--prompt`, `--image_path`, and `--audio_path`.
+
 - **T2V** — Provide `--prompt` only and omit `--image_path`.
 - **TI2V** — Provide both `--prompt` and `--image_path`.
 
@@ -195,31 +197,38 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 ```bash
 bash example/base/run_T2V.sh   # T2V
 bash example/base/run_TI2V.sh  # TI2V
+AUDIO_PATH=/path/to/audio.wav bash example/base/run_TIA2V.sh  # TIA2V
 ```
 
 **Distilled Model (256p, 8 steps, no CFG)**
 ```bash
 bash example/distill/run_T2V.sh
 bash example/distill/run_TI2V.sh
+AUDIO_PATH=/path/to/audio.wav bash example/distill/run_TIA2V.sh
 ```
 
 **Super-Resolution to 540p**
 ```bash
 bash example/sr_540p/run_T2V.sh
 bash example/sr_540p/run_TI2V.sh
+AUDIO_PATH=/path/to/audio.wav bash example/sr_540p/run_TIA2V.sh
 ```
 
 **Super-Resolution to 1080p**
 ```bash
 bash example/sr_1080p/run_T2V.sh
 bash example/sr_1080p/run_TI2V.sh
+AUDIO_PATH=/path/to/audio.wav bash example/sr_1080p/run_TIA2V.sh
 ```
 
 ### CLI Mode Selection
 
 - If `--image_path` is omitted, `inference/pipeline/entry.py` runs **T2V**.
 - If `--image_path` is provided, `inference/pipeline/entry.py` runs **TI2V**.
-- The T2V and TI2V scripts under the same example directory reuse the same checkpoint/config stack. The only difference is whether `--image_path` is passed.
+- If both `--image_path` and `--audio_path` are provided, `inference/pipeline/entry.py` runs **TIA2V**.
+- If only `--audio_path` is provided, `inference/pipeline/entry.py` runs **TA2V**.
+- The T2V, TI2V, and TIA2V scripts under the same example directory reuse the same checkpoint/config stack. The only difference is which reference inputs are passed.
+- `run_TIA2V.sh` expects an audio file path via `AUDIO_PATH`; by default it looks for `example/assets/audio.wav`.
 
 ## ✍️ Prompt Guidance
  

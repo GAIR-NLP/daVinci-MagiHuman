@@ -27,9 +27,13 @@ except ImportError:
     from inference.pipeline import MagiPipeline
 
 
-def infer_generation_mode(image_path: str | None) -> str:
+def infer_generation_mode(image_path: str | None, audio_path: str | None) -> str:
+    if image_path and audio_path:
+        return "tia2v"
     if image_path:
         return "ti2v"
+    if audio_path:
+        return "ta2v"
     return "t2v"
 
 
@@ -39,12 +43,16 @@ def parse_arguments():
     parser.add_argument("--save_path_prefix", type=str, help="Path prefix for saving outputs.")
     parser.add_argument("--output_path", type=str, help="Alias of --save_path_prefix for MAGI-style CLI.")
 
-    parser.add_argument("--image_path", type=str, help="Optional reference image path for ti2v mode; omit for t2v.")
+    parser.add_argument(
+        "--image_path",
+        type=str,
+        help="Optional reference image path for ti2v or tia2v mode; omit for text-only generation.",
+    )
     parser.add_argument(
         "--audio_path",
         type=str,
         default=None,
-        help="Optional reference audio path.",
+        help="Optional reference audio path for ta2v or tia2v mode.",
     )
 
     # Optional runtime controls; forwarded to pipeline methods when provided.
@@ -92,7 +100,7 @@ def main():
         print_rank_0("Error: --prompt is required.")
         sys.exit(1)
 
-    print_rank_0(f"Running inference mode: {infer_generation_mode(image_path)}")
+    print_rank_0(f"Running inference mode: {infer_generation_mode(image_path, audio_path)}")
 
     pipeline.run_offline(
         prompt=prompt, image=image_path, audio=audio_path, save_path_prefix=save_path_prefix, **optional_kwargs
