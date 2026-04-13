@@ -186,10 +186,9 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 
 ### Input Modes
 
-- **TIA2V** 鈥?Provide `--prompt`, `--image_path`, and `--audio_path`.
-
 - **T2V** — Provide `--prompt` only and omit `--image_path`.
 - **TI2V** — Provide both `--prompt` and `--image_path`.
+- **TIA2V** — Provide `--prompt`, `--image_path`, and `--audio_path`.
 
 ### Example Scripts
 
@@ -197,32 +196,28 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 ```bash
 bash example/base/run_T2V.sh   # T2V
 bash example/base/run_TI2V.sh  # TI2V
-AUDIO_PATH=/path/to/audio.wav bash example/base/run_TIA2V.sh           # TIA2V landscape (448x256)
-AUDIO_PATH=/path/to/audio.wav bash example/base/run_TIA2V_portrait.sh  # TIA2V portrait (256x448)
+AUDIO_PATH=/path/to/audio.wav bash example/base/run_TIA2V.sh  # TIA2V
 ```
 
 **Distilled Model (256p, 8 steps, no CFG)**
 ```bash
 bash example/distill/run_T2V.sh
 bash example/distill/run_TI2V.sh
-AUDIO_PATH=/path/to/audio.wav bash example/distill/run_TIA2V.sh           # landscape (448x256)
-AUDIO_PATH=/path/to/audio.wav bash example/distill/run_TIA2V_portrait.sh  # portrait (256x448)
+AUDIO_PATH=/path/to/audio.wav bash example/distill/run_TIA2V.sh
 ```
 
 **Super-Resolution to 540p**
 ```bash
 bash example/sr_540p/run_T2V.sh
 bash example/sr_540p/run_TI2V.sh
-AUDIO_PATH=/path/to/audio.wav bash example/sr_540p/run_TIA2V.sh           # landscape (448x256 -> 896x512)
-AUDIO_PATH=/path/to/audio.wav bash example/sr_540p/run_TIA2V_portrait.sh  # portrait (256x448 -> 512x896)
+AUDIO_PATH=/path/to/audio.wav bash example/sr_540p/run_TIA2V.sh
 ```
 
 **Super-Resolution to 1080p**
 ```bash
 bash example/sr_1080p/run_T2V.sh
 bash example/sr_1080p/run_TI2V.sh
-AUDIO_PATH=/path/to/audio.wav bash example/sr_1080p/run_TIA2V.sh           # landscape (448x256 -> 1920x1088)
-AUDIO_PATH=/path/to/audio.wav bash example/sr_1080p/run_TIA2V_portrait.sh  # portrait (256x448 -> 1088x1920)
+AUDIO_PATH=/path/to/audio.wav bash example/sr_1080p/run_TIA2V.sh
 ```
 
 ### Key Parameters
@@ -230,23 +225,33 @@ AUDIO_PATH=/path/to/audio.wav bash example/sr_1080p/run_TIA2V_portrait.sh  # por
 - `--config-load-path`: selects the config JSON for the current pipeline. The `base`, `distill`, `sr_540p`, and `sr_1080p` scripts point to different config files under `example/`.
 - `--prompt`: prompt text passed into inference. The example scripts read it from `PROMPT_PATH`, which defaults to `example/assets/prompt.txt`.
 - `--image_path`: reference image path for TI2V and TIA2V. The example scripts use `IMAGE_PATH`, which defaults to `example/assets/image.png`.
-- `--audio_path`: reference audio path for TA2V and TIA2V. The TIA2V scripts use `AUDIO_PATH`, which defaults to `example/assets/audio.wav`. This repository does not currently ship a tracked sample audio file, so you should replace it with your own audio file, either by editing `AUDIO_PATH` in the script or by overriding it inline when you run the script.
+- `--audio_path`: reference audio path for TIA2V. The TIA2V scripts use `AUDIO_PATH`, which defaults to `example/assets/audio.wav`. This repository does not currently ship a tracked sample audio file, so you should replace it with your own audio file, either by editing `AUDIO_PATH` in the script or by overriding it inline when you run the script.
 - `--seconds`: target output duration in seconds.
-- `--br_width` and `--br_height`: base-resolution generation size before any optional super-resolution stage. Swap the two values to switch between landscape and portrait.
-- `--sr_width` and `--sr_height`: target super-resolution size. These are only used by the `sr_540p` and `sr_1080p` scripts. Swap the two values to switch between landscape and portrait.
+- `--br_width` and `--br_height`: base-resolution generation size before any optional super-resolution stage. `base` and `distill` generate directly at this resolution. `sr_540p` and `sr_1080p` first generate at this base resolution, then refine to the super-resolution target.
+- `--sr_width` and `--sr_height`: target super-resolution size. These are only used by the `sr_540p` and `sr_1080p` scripts.
 - `--output_path`: output filename prefix for generated videos and logs.
-- `run_TIA2V.sh`: the default landscape TIA2V script in each example directory.
-- `run_TIA2V_portrait.sh`: the portrait wrapper script in each example directory. It swaps the default width and height values, then calls the corresponding `run_TIA2V.sh`.
+
+### Resolution Presets
+
+- `base` and `distill` default to `448x256`.
+- `sr_540p` defaults to `448x256 -> 896x512`.
+- `sr_1080p` defaults to `448x256 -> 1920x1088`.
+- To switch to portrait, swap width and height inside the same script. For example:
+  - `base` / `distill`: `448x256` -> `256x448`
+  - `sr_540p`: `448x256 -> 896x512` -> `256x448 -> 512x896`
+  - `sr_1080p`: `448x256 -> 1920x1088` -> `256x448 -> 1088x1920`
+- The repository now keeps one script per input mode in each example directory:
+  - `run_T2V.sh`
+  - `run_TI2V.sh`
+  - `run_TIA2V.sh`
 
 ### CLI Mode Selection
 
 - If `--image_path` is omitted, `inference/pipeline/entry.py` runs **T2V**.
-- If `--image_path` is provided, `inference/pipeline/entry.py` runs **TI2V**.
 - If both `--image_path` and `--audio_path` are provided, `inference/pipeline/entry.py` runs **TIA2V**.
-- If only `--audio_path` is provided, `inference/pipeline/entry.py` runs **TA2V**.
+- If `--image_path` is provided and `--audio_path` is omitted, `inference/pipeline/entry.py` runs **TI2V**.
 - The T2V, TI2V, and TIA2V scripts under the same example directory reuse the same checkpoint/config stack. The only difference is which reference inputs are passed.
 - The TIA2V scripts expose `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` together near the top of each script so those three inputs are edited in one place.
-- The portrait wrappers keep the same prompt, image, and audio inputs as the landscape scripts. They only swap the default width and height values.
 
 ## ✍️ Prompt Guidance
  
