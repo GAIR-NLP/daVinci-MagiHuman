@@ -39,7 +39,7 @@ fi
 
 if [[ ! -f "${AUDIO_PATH}" ]]; then
   echo "Error: AUDIO_PATH does not exist: ${AUDIO_PATH}" >&2
-  echo "Edit AUDIO_PATH in this script or set AUDIO_PATH=/path/to/audio.wav before running run_TIA2V.sh." >&2
+  echo "Edit AUDIO_PATH near the top of this script before running run_TIA2V.sh." >&2
   exit 1
 fi
 

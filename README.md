@@ -196,28 +196,28 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 ```bash
 bash example/base/run_T2V.sh   # T2V
 bash example/base/run_TI2V.sh  # TI2V
-AUDIO_PATH=/path/to/audio.wav bash example/base/run_TIA2V.sh  # TIA2V
+bash example/base/run_TIA2V.sh  # TIA2V
 ```
 
 **Distilled Model (256p, 8 steps, no CFG)**
 ```bash
 bash example/distill/run_T2V.sh
 bash example/distill/run_TI2V.sh
-AUDIO_PATH=/path/to/audio.wav bash example/distill/run_TIA2V.sh
+bash example/distill/run_TIA2V.sh
 ```
 
 **Super-Resolution to 540p**
 ```bash
 bash example/sr_540p/run_T2V.sh
 bash example/sr_540p/run_TI2V.sh
-AUDIO_PATH=/path/to/audio.wav bash example/sr_540p/run_TIA2V.sh
+bash example/sr_540p/run_TIA2V.sh
 ```
 
 **Super-Resolution to 1080p**
 ```bash
 bash example/sr_1080p/run_T2V.sh
 bash example/sr_1080p/run_TI2V.sh
-AUDIO_PATH=/path/to/audio.wav bash example/sr_1080p/run_TIA2V.sh
+bash example/sr_1080p/run_TIA2V.sh
 ```
 
 ### Key Parameters
@@ -225,11 +225,18 @@ AUDIO_PATH=/path/to/audio.wav bash example/sr_1080p/run_TIA2V.sh
 - `--config-load-path`: selects the config JSON for the current pipeline. The `base`, `distill`, `sr_540p`, and `sr_1080p` scripts point to different config files under `example/`.
 - `--prompt`: prompt text passed into inference. The example scripts read it from `PROMPT_PATH`, which defaults to `example/assets/prompt.txt`.
 - `--image_path`: reference image path for TI2V and TIA2V. The example scripts use `IMAGE_PATH`, which defaults to `example/assets/image.png`.
-- `--audio_path`: reference audio path for TIA2V. The TIA2V scripts use `AUDIO_PATH`, which defaults to `example/assets/audio.wav`. This repository does not currently ship a tracked sample audio file, so you should replace it with your own audio file, either by editing `AUDIO_PATH` in the script or by overriding it inline when you run the script.
+- `--audio_path`: reference audio path for TIA2V. The TIA2V scripts use `AUDIO_PATH`, which defaults to `example/assets/audio.wav`. This repository does not currently ship a tracked sample audio file, so you should replace it by editing `AUDIO_PATH` near the top of each `run_TIA2V.sh`.
 - `--seconds`: target output duration in seconds.
 - `--br_width` and `--br_height`: base-resolution generation size before any optional super-resolution stage. `base` and `distill` generate directly at this resolution. `sr_540p` and `sr_1080p` first generate at this base resolution, then refine to the super-resolution target.
 - `--sr_width` and `--sr_height`: target super-resolution size. These are only used by the `sr_540p` and `sr_1080p` scripts.
 - `--output_path`: output filename prefix for generated videos and logs.
+
+### Supported Input Files
+
+- The example scripts expect local files. They check `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` with `-f` before launching inference.
+- Images are loaded through `diffusers.utils.load_image(...)` and then processed by Pillow-based image transforms. In practice, common static image formats such as `png`, `jpg` / `jpeg`, `webp`, and `bmp` are the safest choices. We recommend using a single-frame `png` or `jpg` image.
+- Audio is loaded through `whisper.load_audio(...)`, which relies on the local `ffmpeg` installation. In practice, common `ffmpeg`-decodable formats such as `wav`, `mp3`, `m4a` / `aac`, `flac`, and `ogg` should work. We recommend using `wav` or `mp3`.
+- If your system `ffmpeg` build cannot decode a given audio file, the TIA2V run will fail before inference starts.
 
 ### Resolution Presets
 
