@@ -184,19 +184,13 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 
 > **Note:** The first run will be slower due to model compilation and cache warmup. Subsequent runs will match the reported inference speeds.
 
-### Input Modes
-
-- **T2V** — Provide `--prompt` only and omit `--image_path`.
-- **TI2V** — Provide both `--prompt` and `--image_path`.
-- **TIA2V** — Provide `--prompt`, `--image_path`, and `--audio_path`.
-
-### Example Scripts
+### Run Scripts
 
 **Base Model (256p)**
 ```bash
 bash example/base/run_T2V.sh   # T2V
 bash example/base/run_TI2V.sh  # TI2V
-bash example/base/run_TIA2V.sh  # TIA2V
+bash example/base/run_TIA2V.sh # TIA2V
 ```
 
 **Distilled Model (256p, 8 steps, no CFG)**
@@ -220,45 +214,32 @@ bash example/sr_1080p/run_TI2V.sh
 bash example/sr_1080p/run_TIA2V.sh
 ```
 
-### Key Parameters
+### Modes
 
-- `--config-load-path`: selects the config JSON for the current pipeline. The `base`, `distill`, `sr_540p`, and `sr_1080p` scripts point to different config files under `example/`.
-- `--prompt`: prompt text passed into inference. The example scripts read it from `PROMPT_PATH`, which defaults to `example/assets/prompt.txt`.
-- `--image_path`: reference image path for TI2V and TIA2V. The example scripts use `IMAGE_PATH`, which defaults to `example/assets/image.png`.
-- `--audio_path`: reference audio path for TIA2V. The TIA2V scripts use `AUDIO_PATH`, which defaults to `example/assets/audio.wav`. This repository does not currently ship a tracked sample audio file, so you should replace it by editing `AUDIO_PATH` near the top of each `run_TIA2V.sh`.
-- `--seconds`: target output duration in seconds.
-- `--br_width` and `--br_height`: base-resolution generation size before any optional super-resolution stage. `base` and `distill` generate directly at this resolution. `sr_540p` and `sr_1080p` first generate at this base resolution, then refine to the super-resolution target.
-- `--sr_width` and `--sr_height`: target super-resolution size. These are only used by the `sr_540p` and `sr_1080p` scripts.
-- `--output_path`: output filename prefix for generated videos and logs.
+- `T2V`: prompt only
+- `TI2V`: prompt + image
+- `TIA2V`: prompt + image + audio
 
-### Supported Input Files
+### Inputs
 
-- The example scripts expect local files. They check `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` with `-f` before launching inference.
-- Images are loaded through `diffusers.utils.load_image(...)` and then processed by Pillow-based image transforms. In practice, common static image formats such as `png`, `jpg` / `jpeg`, `webp`, and `bmp` are the safest choices. We recommend using a single-frame `png` or `jpg` image.
-- Audio is loaded through `whisper.load_audio(...)`, which relies on the local `ffmpeg` installation. In practice, common `ffmpeg`-decodable formats such as `wav`, `mp3`, `m4a` / `aac`, `flac`, and `ogg` should work. We recommend using `wav` or `mp3`.
-- If your system `ffmpeg` build cannot decode a given audio file, the TIA2V run will fail before inference starts.
+- Edit `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` near the top of each script.
+- Default prompt file: `example/assets/prompt.txt`
+- Default image file: `example/assets/image.png`
+- TIA2V also expects an audio file set in `AUDIO_PATH`.
 
-### Resolution Presets
+### Resolution
 
 - `base` and `distill` default to `448x256`.
 - `sr_540p` defaults to `448x256 -> 896x512`.
 - `sr_1080p` defaults to `448x256 -> 1920x1088`.
-- To switch to portrait, swap width and height inside the same script. For example:
-  - `base` / `distill`: `448x256` -> `256x448`
-  - `sr_540p`: `448x256 -> 896x512` -> `256x448 -> 512x896`
-  - `sr_1080p`: `448x256 -> 1920x1088` -> `256x448 -> 1088x1920`
-- The repository now keeps one script per input mode in each example directory:
-  - `run_T2V.sh`
-  - `run_TI2V.sh`
-  - `run_TIA2V.sh`
+- `br_width` / `br_height`: base generation resolution
+- `sr_width` / `sr_height`: super-resolution target, only used by `sr_540p` and `sr_1080p`
+- For portrait, swap width and height in the same script.
 
-### CLI Mode Selection
+### File Formats
 
-- If `--image_path` is omitted, `inference/pipeline/entry.py` runs **T2V**.
-- If both `--image_path` and `--audio_path` are provided, `inference/pipeline/entry.py` runs **TIA2V**.
-- If `--image_path` is provided and `--audio_path` is omitted, `inference/pipeline/entry.py` runs **TI2V**.
-- The T2V, TI2V, and TIA2V scripts under the same example directory reuse the same checkpoint/config stack. The only difference is which reference inputs are passed.
-- The TIA2V scripts expose `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` together near the top of each script so those three inputs are edited in one place.
+- Images are loaded with `diffusers.utils.load_image(...)`. Recommended formats: `png`, `jpg`, `jpeg`. Common `webp` and `bmp` should also work.
+- Audio is loaded with `whisper.load_audio(...)` through local `ffmpeg`. Recommended formats: `wav`, `mp3`. Common `m4a`, `aac`, `flac`, and `ogg` should also work.
 
 ## ✍️ Prompt Guidance
  
