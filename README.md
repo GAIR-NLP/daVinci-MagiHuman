@@ -241,6 +241,35 @@ bash example/sr_1080p/run_TIA2V.sh
 - Images are loaded with `diffusers.utils.load_image(...)`. Recommended formats: `png`, `jpg`, `jpeg`. Common `webp` and `bmp` should also work.
 - Audio is loaded with `whisper.load_audio(...)` through local `ffmpeg`. Recommended formats: `wav`, `mp3`. Common `m4a`, `aac`, `flac`, and `ogg` should also work.
 
+### CPU Offload
+
+- By default, the example scripts do not enable CPU offload.
+- Runtime CPU offload only:
+  ```bash
+  CPU_OFFLOAD=true bash example/sr_1080p/run_TI2V.sh
+  ```
+- MagiCompiler offload only:
+  ```bash
+  MAGI_COMPILER_OFFLOAD_ARGS="--offload_config.model_cpu_offload --offload_config.gpu_resident_weight_ratio 0.35 --offload_config.offload_policy HEURISTIC" \
+  bash example/sr_1080p/run_TI2V.sh
+  ```
+- Both together:
+  ```bash
+  CPU_OFFLOAD=true \
+  MAGI_COMPILER_OFFLOAD_ARGS="--offload_config.model_cpu_offload --offload_config.gpu_resident_weight_ratio 0.35 --offload_config.offload_policy HEURISTIC" \
+  bash example/sr_1080p/run_TI2V.sh
+  ```
+- With `numactl`:
+  ```bash
+  LAUNCH_PREFIX="numactl --interleave=all" \
+  CPU_OFFLOAD=true \
+  MAGI_COMPILER_OFFLOAD_ARGS="--offload_config.model_cpu_offload --offload_config.gpu_resident_weight_ratio 0.35 --offload_config.offload_policy HEURISTIC" \
+  bash example/sr_1080p/run_TI2V.sh
+  ```
+- `CPU_OFFLOAD=true` enables the runtime CPU offload path used by the text encoder and the high-resolution decode path.
+- `MAGI_COMPILER_OFFLOAD_ARGS` is forwarded directly into `torchrun ... inference/pipeline/entry.py`, so MagiCompiler model offload can be enabled without editing the script.
+- `CP_SIZE` now defaults to `GPUS_PER_NODE` in the example scripts and is passed as `--engine_config.cp_size`, so you do not need to edit `config.json` just to match the current GPU count.
+
 ## ✍️ Prompt Guidance
  
 daVinci-MagiHuman uses an **Enhanced Prompt** system that rewrites user inputs into detailed performance directions optimized for avatar-style video generation. For the full system prompt specification, see [`prompts/enhanced_prompt_design.md`](prompts/enhanced_prompt_design.md).
