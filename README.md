@@ -212,7 +212,7 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 
 ### Run Scripts
 
-**Base Model (256p)**
+**Base Model (default: 448x256)**
 ```bash
 bash example/base/run_T2V.sh   # T2V
 bash example/base/run_TI2V.sh  # TI2V
@@ -220,7 +220,7 @@ bash example/base/run_TA2V.sh  # TA2V
 bash example/base/run_TIA2V.sh # TIA2V
 ```
 
-**Distilled Model (256p, 8 steps, no CFG)**
+**Distilled Model (default: 448x256, 8 steps, no CFG)**
 ```bash
 bash example/distill/run_T2V.sh
 bash example/distill/run_TI2V.sh
@@ -294,8 +294,6 @@ With this all-offload setup, the target is to keep `sr_1080p` under `48GB` VRAM 
 - `OFFLOAD_POLICY`: MagiCompiler offload policy. Keep `HEURISTIC` unless you need something else.
 - `CP_SIZE`: context parallel size. In most cases, leave it equal to `GPUS_PER_NODE`.
 - `LAUNCH_PREFIX`: optional launcher prefix, mainly used for `numactl`.
-
-For `base`, this is the recommended starting point on 4090 / 48GB-class GPUs before changing anything deeper in the code.
 
 ## ✍️ Prompt Guidance
  
