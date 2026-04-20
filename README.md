@@ -275,60 +275,27 @@ bash example/sr_1080p/run_TIA2V.sh
 
 ### CPU Offload
 
-The example scripts expose low-memory options near the top of each script:
+For low-memory GPUs such as RTX 4090 / 48GB-class cards, the `base` scripts expose a simple all-offload setup near the top of each script:
 
 ```bash
-CPU_OFFLOAD="${CPU_OFFLOAD:-false}"
-ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-false}"
+CPU_OFFLOAD="${CPU_OFFLOAD:-true}"
+ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-true}"
 GPU_RESIDENT_WEIGHT_RATIO="${GPU_RESIDENT_WEIGHT_RATIO:-0.35}"
 OFFLOAD_POLICY="${OFFLOAD_POLICY:-HEURISTIC}"
 CP_SIZE="${CP_SIZE:-${GPUS_PER_NODE}}"
-LAUNCH_PREFIX="${LAUNCH_PREFIX:-}"
+LAUNCH_PREFIX="${LAUNCH_PREFIX:-numactl --interleave=all}"
 ```
 
-- `CPU_OFFLOAD`: enables the runtime low-memory path. This mainly affects the text encoder, and on the 1080p path it also enables extra CPU/GPU shuttling for high-resolution generation and decode.
+With this all-offload setup, the target is to keep `sr_1080p` under `48GB` VRAM and `base` under `20GB` VRAM on 48GB-class GPUs.
+
+- `CPU_OFFLOAD`: runtime low-memory path.
 - `ENABLE_MAGI_COMPILER_OFFLOAD`: enables MagiCompiler model offload.
 - `GPU_RESIDENT_WEIGHT_RATIO`: lower values save more GPU memory, but are usually slower.
+- `OFFLOAD_POLICY`: MagiCompiler offload policy. Keep `HEURISTIC` unless you need something else.
 - `CP_SIZE`: context parallel size. In most cases, leave it equal to `GPUS_PER_NODE`.
 - `LAUNCH_PREFIX`: optional launcher prefix, mainly used for `numactl`.
 
-Edit these defaults directly in the script you want to run:
-
-- To enable runtime CPU offload, change:
-  ```bash
-  CPU_OFFLOAD="${CPU_OFFLOAD:-false}"
-  ```
-  to:
-  ```bash
-  CPU_OFFLOAD="${CPU_OFFLOAD:-true}"
-  ```
-
-- To enable MagiCompiler offload, change:
-  ```bash
-  ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-false}"
-  ```
-  to:
-  ```bash
-  ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-true}"
-  ```
-
-- To enable both together, change both lines to `true`:
-  ```bash
-  CPU_OFFLOAD="${CPU_OFFLOAD:-true}"
-  ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-true}"
-  GPU_RESIDENT_WEIGHT_RATIO="${GPU_RESIDENT_WEIGHT_RATIO:-0.35}"
-  ```
-
-- To enable `numactl`, change:
-  ```bash
-  LAUNCH_PREFIX="${LAUNCH_PREFIX:-}"
-  ```
-  to:
-  ```bash
-  LAUNCH_PREFIX="${LAUNCH_PREFIX:-numactl --interleave=all}"
-  ```
-
-For GPUs with 48GB or less, the code already uses extra low-memory paths for some components such as the text encoder and VAE. `CPU_OFFLOAD` is an additional runtime option for tighter GPU-memory budgets, and is the setting you should try first on low-memory cards before changing anything deeper in the code.
+For `base`, this is the recommended starting point on 4090 / 48GB-class GPUs before changing anything deeper in the code.
 
 ## ✍️ Prompt Guidance
  
