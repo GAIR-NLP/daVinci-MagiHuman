@@ -30,9 +30,9 @@ if [[ "${ENABLE_MAGI_COMPILER_OFFLOAD}" == "true" ]]; then
   MAGI_COMPILER_OFFLOAD_ARGS="--offload_config.model_cpu_offload --offload_config.gpu_resident_weight_ratio ${GPU_RESIDENT_WEIGHT_RATIO} --offload_config.offload_policy ${OFFLOAD_POLICY}"
 fi
 DISTRIBUTED_ARGS="--nnodes=${NNODES} --node_rank=${NODE_RANK} --nproc_per_node=${GPUS_PER_NODE} --rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT}"
-PROMPT_PATH="${PROMPT_PATH:-example/assets/prompt.txt}"
-IMAGE_PATH="${IMAGE_PATH:-example/assets/image.png}"
-AUDIO_PATH="${AUDIO_PATH:-example/assets/audio.wav}"
+PROMPT_PATH="${PROMPT_PATH:-example/assets/video10.txt}"
+IMAGE_PATH="${IMAGE_PATH:-example/assets/video10.jpeg}"
+AUDIO_PATH="${AUDIO_PATH:-example/assets/video10.ogg}"
 BR_WIDTH="${BR_WIDTH:-448}"
 BR_HEIGHT="${BR_HEIGHT:-256}"
 SR_WIDTH="${SR_WIDTH:-1920}"

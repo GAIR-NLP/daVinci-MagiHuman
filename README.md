@@ -24,7 +24,7 @@
 
 ## 🆕 Recent Updates
 
-- Added example scripts for `T2V`, `TI2V`, and `TIA2V` across `base`, `distill`, `sr_540p`, and `sr_1080p`.
+- Added example scripts for `T2V`, `TI2V`, `TA2V`, and `TIA2V` across `base`, `distill`, `sr_540p`, and `sr_1080p`.
 - Added clearer usage guidance for input modes, resolutions, and runtime script knobs.
 - Added optional memory-saving runtime controls such as `CPU_OFFLOAD`, `MAGI_COMPILER_OFFLOAD_ARGS`, `CP_SIZE`, and `LAUNCH_PREFIX`.
 - Added more public prompt files for selected demos and expanded demo coverage across multiple tasks.
@@ -45,6 +45,7 @@ We recommend organizing released demos by task type rather than by upload order:
 
 - `T2V`: prompt only
 - `TI2V`: prompt + image
+- `TA2V`: prompt + audio
 - `TIA2V`: prompt + image + audio
 
 For local asset management, use filenames such as `video7_T2V.mp4` or `video11_TIA2V.mp4`, while keeping the README grouped by capability.
@@ -220,6 +221,7 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 ```bash
 bash example/base/run_T2V.sh   # T2V
 bash example/base/run_TI2V.sh  # TI2V
+bash example/base/run_TA2V.sh  # TA2V
 bash example/base/run_TIA2V.sh # TIA2V
 ```
 
@@ -227,6 +229,7 @@ bash example/base/run_TIA2V.sh # TIA2V
 ```bash
 bash example/distill/run_T2V.sh
 bash example/distill/run_TI2V.sh
+bash example/distill/run_TA2V.sh
 bash example/distill/run_TIA2V.sh
 ```
 
@@ -234,6 +237,7 @@ bash example/distill/run_TIA2V.sh
 ```bash
 bash example/sr_540p/run_T2V.sh
 bash example/sr_540p/run_TI2V.sh
+bash example/sr_540p/run_TA2V.sh
 bash example/sr_540p/run_TIA2V.sh
 ```
 
@@ -241,6 +245,7 @@ bash example/sr_540p/run_TIA2V.sh
 ```bash
 bash example/sr_1080p/run_T2V.sh
 bash example/sr_1080p/run_TI2V.sh
+bash example/sr_1080p/run_TA2V.sh
 bash example/sr_1080p/run_TIA2V.sh
 ```
 
@@ -248,14 +253,16 @@ bash example/sr_1080p/run_TIA2V.sh
 
 - `T2V`: prompt only
 - `TI2V`: prompt + image
+- `TA2V`: prompt + audio
 - `TIA2V`: prompt + image + audio
 
 ### Inputs
 
 - Edit `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` near the top of each script.
-- Default prompt file: `example/assets/prompt.txt`
-- Default image file: `example/assets/image.png`
-- TIA2V also expects an audio file set in `AUDIO_PATH`.
+- Default `T2V` prompt file: `example/assets/video8.txt`
+- Default `TI2V` prompt and image: `example/assets/prompt.txt` and `example/assets/image.png`
+- Default `TA2V` prompt and audio: `example/assets/video13.txt` and `example/assets/video13.mp3`
+- Default `TIA2V` prompt, image, and audio: `example/assets/video10.txt`, `example/assets/video10.jpeg`, and `example/assets/video10.ogg`
 
 ### Resolution
 
