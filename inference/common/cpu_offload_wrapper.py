@@ -136,6 +136,11 @@ class CPUOffloadWrapper:
         if self.is_cpu_offload and self.is_running_on_gpu:
             backups = self._backup_cpu_state()
             self.model.to(self.cuda_device)
+            args = [arg.to(self.cuda_device) if isinstance(arg, torch.Tensor) and arg.device != self.cuda_device else arg for arg in args]
+            kwargs = {
+                k: v.to(self.cuda_device) if isinstance(v, torch.Tensor) and v.device != self.cuda_device else v
+                for k, v in kwargs.items()
+            }
             try:
                 return func(*args, **kwargs)
             finally:

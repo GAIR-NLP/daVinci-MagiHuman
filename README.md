@@ -22,6 +22,14 @@
 
 </div>
 
+## 🆕 Recent Updates
+
+- Added example scripts for `T2V`, `TI2V`, and `TIA2V` across `base`, `distill`, `sr_540p`, and `sr_1080p`.
+- Added clearer usage guidance for input modes, resolutions, and runtime script knobs.
+- Added optional memory-saving runtime controls such as `CPU_OFFLOAD`, `MAGI_COMPILER_OFFLOAD_ARGS`, `CP_SIZE`, and `LAUNCH_PREFIX`.
+- Added more public prompt files for selected demos and expanded demo coverage across multiple tasks.
+- Clarified supported image and audio input formats.
+
 ## ✨ Highlights
 
 - 🧠 **Single-Stream Transformer** — A unified 15B-parameter, 40-layer Transformer that jointly processes text, video, and audio via self-attention only. No cross-attention, no multi-stream complexity.
@@ -31,7 +39,17 @@
 - 🏆 **State-of-the-Art Results** — Achieves **80.0%** win rate vs Ovi 1.1 and **60.9%** vs LTX 2.3 in pairwise human evaluation over 2,000 comparisons.
 - 📦 **Fully Open Source** — We release the complete model stack: base model, distilled model, super-resolution model, and inference code.
 
-## 🎬 Demo
+## 🎬 Demo Gallery
+
+We recommend organizing released demos by task type rather than by upload order:
+
+- `T2V`: prompt only
+- `TI2V`: prompt + image
+- `TIA2V`: prompt + image + audio
+
+For local asset management, use filenames such as `video7_T2V.mp4` or `video11_TIA2V.mp4`, while keeping the README grouped by capability.
+
+### Featured Demos
 
 https://github.com/user-attachments/assets/7050a191-38ef-4e36-8b48-0084ccc694f1
 
@@ -50,6 +68,18 @@ https://github.com/user-attachments/assets/c6cc056f-56ca-4285-80f3-bb6052228d23
 <td width="50%"><video src="https://github.com/user-attachments/assets/7db9db31-617e-44a6-b2df-99d47accba22" controls muted width="100%"></video></td>
 </tr>
 </table>
+
+### T2V Demos
+
+Add future `T2V` examples here. For each video, we recommend linking the corresponding prompt file in `example/assets/`.
+
+### TI2V Demos
+
+Add future `TI2V` examples here. For each video, we recommend linking both the prompt file and the reference first-frame image when available.
+
+### TIA2V Demos
+
+Add future `TIA2V` examples here. For each video, we recommend linking the prompt file and specifying the reference image and audio source.
 
 ## 🏗️ Architecture
 
