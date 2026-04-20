@@ -26,7 +26,7 @@
 
 - Added example scripts for `T2V`, `TI2V`, `TA2V`, and `TIA2V` across `base`, `distill`, `sr_540p`, and `sr_1080p`.
 - Added clearer usage guidance for input modes, resolutions, and runtime script knobs.
-- Added optional memory-saving runtime controls such as `CPU_OFFLOAD`, `MAGI_COMPILER_OFFLOAD_ARGS`, `CP_SIZE`, and `LAUNCH_PREFIX`.
+- Added optional low-memory runtime settings for consumer GPUs, including runtime CPU offload, compiler offload, context parallel size, and optional NUMA launch settings.
 - Added more public prompt files for selected demos and expanded demo coverage across multiple tasks.
 - Clarified supported image and audio input formats.
 
@@ -280,32 +280,60 @@ bash example/sr_1080p/run_TIA2V.sh
 
 ### CPU Offload
 
-- By default, the example scripts do not enable CPU offload.
-- Runtime CPU offload only:
+The example scripts expose low-memory options near the top of each script:
+
+```bash
+CPU_OFFLOAD="${CPU_OFFLOAD:-false}"
+ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-false}"
+GPU_RESIDENT_WEIGHT_RATIO="${GPU_RESIDENT_WEIGHT_RATIO:-0.35}"
+OFFLOAD_POLICY="${OFFLOAD_POLICY:-HEURISTIC}"
+CP_SIZE="${CP_SIZE:-${GPUS_PER_NODE}}"
+LAUNCH_PREFIX="${LAUNCH_PREFIX:-}"
+```
+
+- `CPU_OFFLOAD`: enables the runtime low-memory path. This mainly affects the text encoder, and on the 1080p path it also enables extra CPU/GPU shuttling for high-resolution generation and decode.
+- `ENABLE_MAGI_COMPILER_OFFLOAD`: enables MagiCompiler model offload.
+- `GPU_RESIDENT_WEIGHT_RATIO`: lower values save more GPU memory, but are usually slower.
+- `CP_SIZE`: context parallel size. In most cases, leave it equal to `GPUS_PER_NODE`.
+- `LAUNCH_PREFIX`: optional launcher prefix, mainly used for `numactl`.
+
+Edit these defaults directly in the script you want to run:
+
+- To enable runtime CPU offload, change:
   ```bash
-  CPU_OFFLOAD=true bash example/sr_1080p/run_TI2V.sh
+  CPU_OFFLOAD="${CPU_OFFLOAD:-false}"
   ```
-- MagiCompiler offload only:
+  to:
   ```bash
-  MAGI_COMPILER_OFFLOAD_ARGS="--offload_config.model_cpu_offload --offload_config.gpu_resident_weight_ratio 0.35 --offload_config.offload_policy HEURISTIC" \
-  bash example/sr_1080p/run_TI2V.sh
+  CPU_OFFLOAD="${CPU_OFFLOAD:-true}"
   ```
-- Both together:
+
+- To enable MagiCompiler offload, change:
   ```bash
-  CPU_OFFLOAD=true \
-  MAGI_COMPILER_OFFLOAD_ARGS="--offload_config.model_cpu_offload --offload_config.gpu_resident_weight_ratio 0.35 --offload_config.offload_policy HEURISTIC" \
-  bash example/sr_1080p/run_TI2V.sh
+  ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-false}"
   ```
-- With `numactl`:
+  to:
   ```bash
-  LAUNCH_PREFIX="numactl --interleave=all" \
-  CPU_OFFLOAD=true \
-  MAGI_COMPILER_OFFLOAD_ARGS="--offload_config.model_cpu_offload --offload_config.gpu_resident_weight_ratio 0.35 --offload_config.offload_policy HEURISTIC" \
-  bash example/sr_1080p/run_TI2V.sh
+  ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-true}"
   ```
-- `CPU_OFFLOAD=true` enables the runtime CPU offload path used by the text encoder and the high-resolution decode path.
-- `MAGI_COMPILER_OFFLOAD_ARGS` is forwarded directly into `torchrun ... inference/pipeline/entry.py`, so MagiCompiler model offload can be enabled without editing the script.
-- `CP_SIZE` now defaults to `GPUS_PER_NODE` in the example scripts and is passed as `--engine_config.cp_size`, so you do not need to edit `config.json` just to match the current GPU count.
+
+- To enable both together, change both lines to `true`:
+  ```bash
+  CPU_OFFLOAD="${CPU_OFFLOAD:-true}"
+  ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-true}"
+  GPU_RESIDENT_WEIGHT_RATIO="${GPU_RESIDENT_WEIGHT_RATIO:-0.35}"
+  ```
+
+- To enable `numactl`, change:
+  ```bash
+  LAUNCH_PREFIX="${LAUNCH_PREFIX:-}"
+  ```
+  to:
+  ```bash
+  LAUNCH_PREFIX="${LAUNCH_PREFIX:-numactl --interleave=all}"
+  ```
+
+For GPUs with 48GB or less, the code already uses extra low-memory paths for some components such as the text encoder and VAE. `CPU_OFFLOAD` is an additional runtime option for tighter GPU-memory budgets, and is the setting you should try first on low-memory cards before changing anything deeper in the code.
 
 ## ✍️ Prompt Guidance
  
