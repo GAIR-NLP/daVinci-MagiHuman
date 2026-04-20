@@ -25,8 +25,8 @@
 ## 🆕 Recent Updates
 
 - Added example scripts for `T2V`, `TI2V`, `TA2V`, and `TIA2V` across `base`, `distill`, `sr_540p`, and `sr_1080p`.
-- Added clearer usage guidance for input modes, resolutions, and runtime script knobs.
-- Added optional low-memory runtime settings for consumer GPUs, including runtime CPU offload, compiler offload, context parallel size, and optional NUMA launch settings.
+- Added clearer usage guidance for `base`, `distill`, `sr_540p`, and `sr_1080p`, including input modes, default resolutions, and runtime script knobs.
+- Added optional low-memory runtime settings for consumer GPUs, including runtime CPU offload, MagiCompiler offload, context parallel size, and optional `numactl` launch settings.
 - Added more public prompt files for selected demos and expanded demo coverage across multiple tasks.
 - Clarified supported image and audio input formats.
 
@@ -40,15 +40,6 @@
 - 📦 **Fully Open Source** — We release the complete model stack: base model, distilled model, super-resolution model, and inference code.
 
 ## 🎬 Demo Gallery
-
-We recommend organizing released demos by task type rather than by upload order:
-
-- `T2V`: prompt only
-- `TI2V`: prompt + image
-- `TA2V`: prompt + audio
-- `TIA2V`: prompt + image + audio
-
-For local asset management, use filenames such as `video7_T2V.mp4` or `video11_TIA2V.mp4`, while keeping the README grouped by capability.
 
 ### Featured Demos
 
@@ -77,6 +68,10 @@ Add future `T2V` examples here. For each video, we recommend linking the corresp
 ### TI2V Demos
 
 Add future `TI2V` examples here. For each video, we recommend linking both the prompt file and the reference first-frame image when available.
+
+### TA2V Demos
+
+Add future `TA2V` examples here. For each video, we recommend linking the prompt file and the reference audio source.
 
 ### TIA2V Demos
 

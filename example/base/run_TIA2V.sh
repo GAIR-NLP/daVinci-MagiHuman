@@ -54,22 +54,6 @@ if [[ ! -f "${AUDIO_PATH}" ]]; then
   exit 1
 fi
 
-# ==============================================================================================
-# RUNNING ON CONSUMER GPUs (e.g., RTX 5090)
-# ==============================================================================================
-# If you want to run this script on a consumer GPU, please follow these steps to avoid OOM errors:
-#
-# 1. Define MAGI_COMPILER_OFFLOAD_ARGS and append it to the `torchrun` command below.
-# 2. By default, `CP_SIZE` follows `GPUS_PER_NODE`. Override `CP_SIZE` only if you need a different context parallel size.
-# 3. Depending on your NUMA node configuration, use `numactl` as a prefix to optimize memory bandwidth:
-#    - If spanning multiple NUMA nodes: `numactl --interleave=all`
-#    - If on a single NUMA node:        `numactl --cpunodebind=$NUMA_NODE --membind=$NUMA_NODE`
-#
-# --- Example Usage ---
-# MAGI_COMPILER_OFFLOAD_ARGS="--offload_config.model_cpu_offload --offload_config.gpu_resident_weight_ratio 0.35 --offload_config.offload_policy HEURISTIC"
-# numactl --interleave=all torchrun ${DISTRIBUTED_ARGS} inference/pipeline/entry.py ... $MAGI_COMPILER_OFFLOAD_ARGS
-# ==============================================================================================
-
 $LAUNCH_PREFIX torchrun ${DISTRIBUTED_ARGS} inference/pipeline/entry.py ${MAGI_COMPILER_OFFLOAD_ARGS} \
   --config-load-path example/base/config.json \
   --engine_config.cp_size "${CP_SIZE}" \
