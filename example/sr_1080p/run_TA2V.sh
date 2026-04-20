@@ -31,8 +31,8 @@ if [[ "${ENABLE_MAGI_COMPILER_OFFLOAD}" == "true" ]]; then
 fi
 DISTRIBUTED_ARGS="--nnodes=${NNODES} --node_rank=${NODE_RANK} --nproc_per_node=${GPUS_PER_NODE} --rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT}"
 
-PROMPT_PATH="${PROMPT_PATH:-example/assets/video13.txt}"
-AUDIO_PATH="${AUDIO_PATH:-example/assets/video13.mp3}"
+PROMPT_PATH="${PROMPT_PATH:-example/assets/video11.txt}"
+AUDIO_PATH="${AUDIO_PATH:-example/assets/video11.mp3}"
 BR_WIDTH="${BR_WIDTH:-448}"
 BR_HEIGHT="${BR_HEIGHT:-256}"
 SR_WIDTH="${SR_WIDTH:-1920}"

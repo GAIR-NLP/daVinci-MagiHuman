@@ -261,7 +261,7 @@ bash example/sr_1080p/run_TIA2V.sh
 - Edit `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` near the top of each script.
 - Default `T2V` prompt file: `example/assets/video8.txt`
 - Default `TI2V` prompt and image: `example/assets/prompt.txt` and `example/assets/image.png`
-- Default `TA2V` prompt and audio: `example/assets/video13.txt` and `example/assets/video13.mp3`
+- Default `TA2V` prompt and audio: `example/assets/video11.txt` and `example/assets/video11.mp3`
 - Default `TIA2V` prompt, image, and audio: `example/assets/video10.txt`, `example/assets/video10.jpeg`, and `example/assets/video10.ogg`
 
 ### Resolution
