@@ -69,10 +69,6 @@ https://github.com/user-attachments/assets/4bbc8685-cfc3-4724-b41a-c033d867da2a
 
 https://github.com/user-attachments/assets/9a32f9f8-4d3a-4140-b64b-4b44cd54d89b
 
-### TI2V Demos
-
-Add future `TI2V` examples here. For each video, we recommend linking both the prompt file and the reference first-frame image when available.
-
 ### TA2V Demos
 https://github.com/user-attachments/assets/2869bd2a-9cbd-4e16-918f-d3a727459440
 
