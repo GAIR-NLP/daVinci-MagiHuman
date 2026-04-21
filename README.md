@@ -1,9 +1,5 @@
 
-
-https://github.com/user-attachments/assets/65604493-a3ab-47d8-b70f-c6334fb86c8c
-
 ![cover](assets/cover.png)
-
 
 -----
 
@@ -69,7 +65,11 @@ https://github.com/user-attachments/assets/c6cc056f-56ca-4285-80f3-bb6052228d23
 
 https://github.com/user-attachments/assets/dc38af53-0341-4925-ae55-f458b6c32443
 
-Add future `T2V` examples here. For each video, we recommend linking the corresponding prompt file in `example/assets/`.
+https://github.com/user-attachments/assets/8a85f573-8434-4efc-8f39-a45191fc0c19
+
+https://github.com/user-attachments/assets/0a764424-10e2-4b62-a343-45763a449da2
+
+
 
 ### TI2V Demos
 
