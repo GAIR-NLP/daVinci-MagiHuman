@@ -3,37 +3,18 @@
 [Back to README](README.md)
 
 ## T2V Demos
+https://github.com/user-attachments/assets/8b9225fa-6154-4746-b6e8-d9140e134b65
 
-<table>
-<tr valign="top">
-<td width="100%"><video src="https://github.com/user-attachments/assets/af17820c-4443-49a2-8328-07de277a6dc8" controls muted width="100%"></video></td>
-</tr>
-</table>
+https://github.com/user-attachments/assets/3ba65562-cfcc-4899-8fd9-dcd9a7e49ce6
 
-<table>
-<tr valign="top">
-<td width="100%"><video src="https://github.com/user-attachments/assets/4bbc8685-cfc3-4724-b41a-c033d867da2a" controls muted width="100%"></video></td>
-</tr>
-</table>
+https://github.com/user-attachments/assets/98ba8cb5-d6f7-4abe-b28c-dcbdd0a700fd
 
-<table>
-<tr valign="top">
-<td width="100%"><video src="https://github.com/user-attachments/assets/9a32f9f8-4d3a-4140-b64b-4b44cd54d89b" controls muted width="100%"></video></td>
-</tr>
-</table>
 
 ## TA2V Demos
 
-<table>
-<tr valign="top">
-<td width="100%"><video src="https://github.com/user-attachments/assets/2869bd2a-9cbd-4e16-918f-d3a727459440" controls muted width="100%"></video></td>
-</tr>
-</table>
+https://github.com/user-attachments/assets/0b5fe15c-2786-4d34-9758-61af34743da5
 
 ## TIA2V Demos
 
-<table>
-<tr valign="top">
-<td width="100%"><video src="https://github.com/user-attachments/assets/ba8b0096-981f-4e20-a24b-d6fe380ce3a0" controls muted width="100%"></video></td>
-</tr>
-</table>
+https://github.com/user-attachments/assets/b1561318-80be-4cc1-8de7-41d131555c60
+
