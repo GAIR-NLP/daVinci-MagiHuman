@@ -34,6 +34,10 @@ output
 
 # Keep example and repo assets tracked.
 !example/assets/*.png
+!example/assets/*.jpg
+!example/assets/*.jpeg
+!example/assets/*.mp3
+!example/assets/*.ogg
 !example/assets/*.mp4
 !example/**/*.json
 !assets/*.png

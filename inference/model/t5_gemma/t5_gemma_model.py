@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 from transformers import AutoTokenizer
@@ -27,14 +27,14 @@ class T5GemmaEncoder:
         return outputs["last_hidden_state"].half()
 
 
-_t5_gemma_cache: Optional[T5GemmaEncoder] = None
+_t5_gemma_cache: Dict[Tuple[str, str, torch.dtype], T5GemmaEncoder] = {}
 
 
 def get_t5_gemma_encoder(model_path: str, device: str, weight_dtype: torch.dtype) -> T5GemmaEncoder:
-    global _t5_gemma_cache
-    if _t5_gemma_cache is None:
-        _t5_gemma_cache = T5GemmaEncoder(model_path=model_path, device=device, weight_dtype=weight_dtype)
-    return _t5_gemma_cache
+    cache_key = (model_path, device, weight_dtype)
+    if cache_key not in _t5_gemma_cache:
+        _t5_gemma_cache[cache_key] = T5GemmaEncoder(model_path=model_path, device=device, weight_dtype=weight_dtype)
+    return _t5_gemma_cache[cache_key]
 
 
 @torch.inference_mode()

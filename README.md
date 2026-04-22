@@ -1,5 +1,6 @@
-![cover](assets/cover.png)
 
+
+![cover](assets/cover.png)
 
 -----
 
@@ -22,6 +23,20 @@
 
 </div>
 
+## 🆕 Recent Updates
+
+- Added example scripts for `T2V`, `TI2V`, `TA2V`, and `TIA2V` across `base`, `distill`, `sr_540p`, and `sr_1080p`.
+  > Available in all four example directories with task-specific run scripts.
+- Added clearer usage guidance for `base`, `distill`, `sr_540p`, and `sr_1080p`.
+  > Focus: input modes, landscape vs. portrait resolution switching, and audio / image setup.
+- Added optional low-memory runtime settings for consumer GPUs.
+  > Key knobs: `CPU_OFFLOAD`, `ENABLE_MAGI_COMPILER_OFFLOAD`, `CP_SIZE`, and `LAUNCH_PREFIX`.
+  >
+  > Low-memory highlights: **CPU offload**, **MagiCompiler offload**, and optional **`numactl`** launch settings are now exposed directly in the example scripts.
+- Added more public prompt files for selected demos and expanded demo coverage across multiple tasks.
+  > Extra demos are now grouped under [More Demos](MORE_DEMOS.md).
+- Clarified supported image and audio input formats.
+
 ## ✨ Highlights
 
 - 🧠 **Single-Stream Transformer** — A unified 15B-parameter, 40-layer Transformer that jointly processes text, video, and audio via self-attention only. No cross-attention, no multi-stream complexity.
@@ -31,7 +46,9 @@
 - 🏆 **State-of-the-Art Results** — Achieves **80.0%** win rate vs Ovi 1.1 and **60.9%** vs LTX 2.3 in pairwise human evaluation over 2,000 comparisons.
 - 📦 **Fully Open Source** — We release the complete model stack: base model, distilled model, super-resolution model, and inference code.
 
-## 🎬 Demo
+## 🎬 Demo Gallery
+
+### Featured Demos
 
 https://github.com/user-attachments/assets/7050a191-38ef-4e36-8b48-0084ccc694f1
 
@@ -50,6 +67,8 @@ https://github.com/user-attachments/assets/c6cc056f-56ca-4285-80f3-bb6052228d23
 <td width="50%"><video src="https://github.com/user-attachments/assets/7db9db31-617e-44a6-b2df-99d47accba22" controls muted width="100%"></video></td>
 </tr>
 </table>
+
+### [More Demos](MORE_DEMOS.md)
 
 ## 🏗️ Architecture
 
@@ -184,42 +203,91 @@ Before running, update the checkpoint paths in the config files (`example/*/conf
 
 > **Note:** The first run will be slower due to model compilation and cache warmup. Subsequent runs will match the reported inference speeds.
 
-### Input Modes
+### Run Scripts
 
-- **T2V** — Provide `--prompt` only and omit `--image_path`.
-- **TI2V** — Provide both `--prompt` and `--image_path`.
-
-### Example Scripts
-
-**Base Model (256p)**
+**Base Model (default: 448x256)**
 ```bash
 bash example/base/run_T2V.sh   # T2V
 bash example/base/run_TI2V.sh  # TI2V
+bash example/base/run_TA2V.sh  # TA2V
+bash example/base/run_TIA2V.sh # TIA2V
 ```
 
-**Distilled Model (256p, 8 steps, no CFG)**
+**Distilled Model (default: 448x256, 8 steps, no CFG)**
 ```bash
 bash example/distill/run_T2V.sh
 bash example/distill/run_TI2V.sh
+bash example/distill/run_TA2V.sh
+bash example/distill/run_TIA2V.sh
 ```
 
 **Super-Resolution to 540p**
 ```bash
 bash example/sr_540p/run_T2V.sh
 bash example/sr_540p/run_TI2V.sh
+bash example/sr_540p/run_TA2V.sh
+bash example/sr_540p/run_TIA2V.sh
 ```
 
 **Super-Resolution to 1080p**
 ```bash
 bash example/sr_1080p/run_T2V.sh
 bash example/sr_1080p/run_TI2V.sh
+bash example/sr_1080p/run_TA2V.sh
+bash example/sr_1080p/run_TIA2V.sh
 ```
 
-### CLI Mode Selection
+### Modes
 
-- If `--image_path` is omitted, `inference/pipeline/entry.py` runs **T2V**.
-- If `--image_path` is provided, `inference/pipeline/entry.py` runs **TI2V**.
-- The T2V and TI2V scripts under the same example directory reuse the same checkpoint/config stack. The only difference is whether `--image_path` is passed.
+- `T2V`: prompt only
+- `TI2V`: prompt + image
+- `TA2V`: prompt + audio
+- `TIA2V`: prompt + image + audio
+
+### Inputs
+
+- Edit `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` near the top of each script.
+- For audio-driven generation, set `AUDIO_PATH` in the script. It will be passed to `--audio_path`.
+- For image-conditioned generation, set `IMAGE_PATH` in the script.
+
+### Resolution
+
+- Landscape defaults:
+  - `base`: `448x256`
+  - `distill`: `448x256`
+  - `sr_540p`: `896x512`
+  - `sr_1080p`: `1920x1088`
+- For portrait, swap width and height in the same script:
+  - `448x256 -> 256x448`
+  - `896x512 -> 512x896`
+  - `1920x1088 -> 1088x1920`
+
+### File Formats
+
+- Images are loaded with `diffusers.utils.load_image(...)`. Recommended formats: `png`, `jpg`, `jpeg`. Common `webp` and `bmp` should also work.
+- Audio is loaded with `whisper.load_audio(...)` through local `ffmpeg`. Recommended formats: `wav`, `mp3`. Common `m4a`, `aac`, `flac`, and `ogg` should also work.
+
+### CPU Offload
+
+For low-memory GPUs such as RTX 4090 / 48GB-class cards, the `base` scripts expose a simple all-offload setup near the top of each script:
+
+```bash
+CPU_OFFLOAD="${CPU_OFFLOAD:-true}"
+ENABLE_MAGI_COMPILER_OFFLOAD="${ENABLE_MAGI_COMPILER_OFFLOAD:-true}"
+GPU_RESIDENT_WEIGHT_RATIO="${GPU_RESIDENT_WEIGHT_RATIO:-0.35}"
+OFFLOAD_POLICY="${OFFLOAD_POLICY:-HEURISTIC}"
+CP_SIZE="${CP_SIZE:-${GPUS_PER_NODE}}"
+LAUNCH_PREFIX="${LAUNCH_PREFIX:-numactl --interleave=all}"
+```
+
+With this all-offload setup, the target is to keep `sr_1080p` under `48GB` VRAM and `base` under `20GB` VRAM on 48GB-class GPUs.
+
+- `CPU_OFFLOAD`: runtime low-memory path.
+- `ENABLE_MAGI_COMPILER_OFFLOAD`: enables MagiCompiler model offload.
+- `GPU_RESIDENT_WEIGHT_RATIO`: lower values save more GPU memory, but are usually slower.
+- `OFFLOAD_POLICY`: MagiCompiler offload policy. Keep `HEURISTIC` unless you need something else.
+- `CP_SIZE`: context parallel size. In most cases, leave it equal to `GPUS_PER_NODE`.
+- `LAUNCH_PREFIX`: optional launcher prefix, mainly used for `numactl`.
 
 ## ✍️ Prompt Guidance
  
