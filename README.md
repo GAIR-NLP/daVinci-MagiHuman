@@ -26,9 +26,15 @@
 ## 🆕 Recent Updates
 
 - Added example scripts for `T2V`, `TI2V`, `TA2V`, and `TIA2V` across `base`, `distill`, `sr_540p`, and `sr_1080p`.
-- Added clearer usage guidance for `base`, `distill`, `sr_540p`, and `sr_1080p`, including input modes, default resolutions, and runtime script knobs.
-- Added optional low-memory runtime settings for consumer GPUs, including runtime CPU offload, MagiCompiler offload, context parallel size, and optional `numactl` launch settings.
+  > Available in all four example directories with task-specific run scripts.
+- Added clearer usage guidance for `base`, `distill`, `sr_540p`, and `sr_1080p`.
+  > Focus: input modes, landscape vs. portrait resolution switching, and audio / image setup.
+- Added optional low-memory runtime settings for consumer GPUs.
+  > Key knobs: `CPU_OFFLOAD`, `ENABLE_MAGI_COMPILER_OFFLOAD`, `CP_SIZE`, and `LAUNCH_PREFIX`.
+  >
+  > Low-memory highlights: **CPU offload**, **MagiCompiler offload**, and optional **`numactl`** launch settings are now exposed directly in the example scripts.
 - Added more public prompt files for selected demos and expanded demo coverage across multiple tasks.
+  > Extra demos are now grouped under [More Demos](MORE_DEMOS.md).
 - Clarified supported image and audio input formats.
 
 ## ✨ Highlights
@@ -62,7 +68,7 @@ https://github.com/user-attachments/assets/c6cc056f-56ca-4285-80f3-bb6052228d23
 </tr>
 </table>
 
-**[More Demos](MORE_DEMOS.md)**
+### [More Demos](MORE_DEMOS.md)
 
 ## 🏗️ Architecture
 
@@ -241,19 +247,20 @@ bash example/sr_1080p/run_TIA2V.sh
 ### Inputs
 
 - Edit `PROMPT_PATH`, `IMAGE_PATH`, and `AUDIO_PATH` near the top of each script.
-- Default `T2V` prompt file: `example/assets/video8.txt`
-- Default `TI2V` prompt and image: `example/assets/prompt.txt` and `example/assets/image.png`
-- Default `TA2V` prompt and audio: `example/assets/video11.txt` and `example/assets/video11.mp3`
-- Default `TIA2V` prompt, image, and audio: `example/assets/video10.txt`, `example/assets/video10.jpeg`, and `example/assets/video10.ogg`
+- For audio-driven generation, set `AUDIO_PATH` in the script. It will be passed to `--audio_path`.
+- For image-conditioned generation, set `IMAGE_PATH` in the script.
 
 ### Resolution
 
-- `base` and `distill` default to `448x256`.
-- `sr_540p` defaults to `448x256 -> 896x512`.
-- `sr_1080p` defaults to `448x256 -> 1920x1088`.
-- `br_width` / `br_height`: base generation resolution
-- `sr_width` / `sr_height`: super-resolution target, only used by `sr_540p` and `sr_1080p`
-- For portrait, swap width and height in the same script.
+- Landscape defaults:
+  - `base`: `448x256`
+  - `distill`: `448x256`
+  - `sr_540p`: `896x512`
+  - `sr_1080p`: `1920x1088`
+- For portrait, swap width and height in the same script:
+  - `448x256 -> 256x448`
+  - `896x512 -> 512x896`
+  - `1920x1088 -> 1088x1920`
 
 ### File Formats
 
