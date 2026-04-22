@@ -44,10 +44,8 @@
 
 ### Featured Demos
 
-**Video 1**
 https://github.com/user-attachments/assets/7050a191-38ef-4e36-8b48-0084ccc694f1
 
-**Video 2**
 https://github.com/user-attachments/assets/c6cc056f-56ca-4285-80f3-bb6052228d23
 
 <table>
@@ -56,24 +54,15 @@ https://github.com/user-attachments/assets/c6cc056f-56ca-4285-80f3-bb6052228d23
 <td width="33%"><video src="https://github.com/user-attachments/assets/c5f87f3a-f121-4f34-8d41-8c4b1c24b5e6" controls muted width="100%"></video></td>
 <td width="33%"><video src="https://github.com/user-attachments/assets/0fb467e8-e3a4-4155-9d6b-10b2e018bd7f" controls muted width="100%"></video></td>
 </tr>
-<tr valign="top">
-<td align="center"><strong>Video 3</strong></td>
-<td align="center"><strong>Video 4</strong></td>
-<td align="center"><strong>Video 5</strong></td>
-</tr>
 </table>
 <table>
 <tr valign="top">
 <td width="50%"><video src="https://github.com/user-attachments/assets/956d55ce-72cf-4dd4-a29e-ea2c3f725864" controls muted width="100%"></video></td>
 <td width="50%"><video src="https://github.com/user-attachments/assets/7db9db31-617e-44a6-b2df-99d47accba22" controls muted width="100%"></video></td>
 </tr>
-<tr valign="top">
-<td align="center"><strong>Video 6</strong></td>
-<td align="center"><strong>Video 7</strong></td>
-</tr>
 </table>
 
-**More demos:** [`Video 8` to `Video 12`](MORE_DEMOS.md)
+**[More Demos](MORE_DEMOS.md)**
 
 ## 🏗️ Architecture
 
