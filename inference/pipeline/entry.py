@@ -20,6 +20,13 @@ from inference.infra import initialize_infra
 from inference.model.dit import get_dit
 from inference.utils import print_rank_0
 
+# ghitza-patch 2026-11-04: nightly-torch dynamo trips a guard bug ("'NoneType' object is not
+# subscriptable" on the VAE encoder's conv forward defaults). Fall back to eager on any compile
+# failure instead of crashing the run.
+import torch._dynamo
+
+torch._dynamo.config.suppress_errors = True
+
 try:
     from .pipeline import MagiPipeline
 except ImportError:

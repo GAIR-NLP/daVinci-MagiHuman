@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib
+import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, List, Optional, Tuple
@@ -127,6 +128,15 @@ class ModalityDispatcher:
     def inv_permute(x: torch.Tensor, inv_permute_mapping: torch.Tensor) -> torch.Tensor:
         """Apply inverse permutation to tensor."""
         return x[inv_permute_mapping]
+
+    def to_device(self, dev):
+        # ghitza-patch 2026-11-04: re-home the dispatcher's tensors at a pipeline-split boundary.
+        self.modality_mapping = self.modality_mapping.to(dev)
+        self.permute_mapping = self.permute_mapping.to(dev)
+        self.inv_permute_mapping = self.inv_permute_mapping.to(dev)
+        self.permuted_modality_mapping = self.permuted_modality_mapping.to(dev)
+        self.group_size = self.group_size.to(dev)
+        return self
 
 
 def freq_bands(
@@ -333,11 +343,31 @@ class BaseLinear(nn.Module):
         self.num_layers_for_initialization = num_layers_for_initialization
         self.num_experts = num_experts
         self.use_bias = bias
-        self.weight = Parameter(torch.empty((out_features * num_experts, in_features), **factory_kwargs))
+        # ghitza-patch 2026-11-04: keep weight fp8-resident (float8_e4m3fn) instead of bf16.
+        # The checkpoint stores weights as float8_e4m3fn + a per-tensor scalar __fp8_scale.
+        # load_state_dict used to CAST fp8->bf16 (28.5GB resident, OOM on 16GB); storing fp8
+        # halves it to ~15GB. _BF16ComputeLinear casts to bf16 at matmul anyway, so no fp8
+        # tensor cores are needed (works on sm_89 too). bias is False everywhere here, so the
+        # per-tensor scalar scale is applied to the matmul OUTPUT in forward (output = scale * x@w^T).
+        self.weight = Parameter(
+            torch.empty((out_features * num_experts, in_features), device=device, dtype=torch.float8_e4m3fn),
+            requires_grad=False,
+        )
+        self.register_buffer("weight_scale", torch.ones((), dtype=torch.float32, device=device))
         if bias:
             self.bias = Parameter(torch.empty(out_features * num_experts, **factory_kwargs))
         else:
             self.register_parameter("bias", None)
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # ghitza-patch 2026-11-04: consume the companion "<weight>.__fp8_scale" key into the
+        # weight_scale buffer so it is not reported as an unexpected key and the scale is applied.
+        scale_key = prefix + "weight.__fp8_scale"
+        if scale_key in state_dict:
+            with torch.no_grad():
+                self.weight_scale.copy_(state_dict[scale_key].to(torch.float32).reshape(()))
+            del state_dict[scale_key]
+        return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(
         self,
@@ -346,7 +376,9 @@ class BaseLinear(nn.Module):
         modality_dispatcher: Optional[ModalityDispatcher] = None,
     ) -> torch.Tensor:
         output_dtype = input.dtype if output_dtype is None else output_dtype
-        return _BF16ComputeLinear.apply(input, self.weight, self.bias, output_dtype, torch.bfloat16)
+        # ghitza-patch 2026-11-04: fp8 per-tensor dequant via output scale (bias is None here).
+        out = _BF16ComputeLinear.apply(input, self.weight, self.bias, output_dtype, torch.bfloat16)
+        return out * self.weight_scale.to(out.dtype)
 
 
 class NativeMoELinear(BaseLinear):
@@ -372,7 +404,9 @@ class NativeMoELinear(BaseLinear):
                 output_dtype,
                 torch.bfloat16,
             )
-        return modality_dispatcher.undispatch(*input_list)  # type: ignore
+        out = modality_dispatcher.undispatch(*input_list)  # type: ignore
+        # ghitza-patch 2026-11-04: fp8 per-tensor dequant (one scalar scale for the whole weight).
+        return out * self.weight_scale.to(out.dtype)
 
 
 def create_linear(
@@ -394,10 +428,22 @@ def flash_attn_func(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor)
         from flash_attn_interface import flash_attn_func as fa3_flash_attn_func
 
         return fa3_flash_attn_func(query, key, value)
-    else:
+    try:
         from flash_attn.flash_attn_interface import flash_attn_func as fa2_flash_attn_func
 
         return fa2_flash_attn_func(query, key, value)
+    except Exception:
+        # ghitza-patch 2026-11-03: SDPA fallback for Blackwell / no flash-attn build.
+        # FA layout is [B, S, H, D]; SDPA wants [B, H, S, D]. Same math (non-causal, scaled).
+        import torch.nn.functional as _F
+        q = query.transpose(1, 2)
+        k = key.transpose(1, 2)
+        v = value.transpose(1, 2)
+        # ghitza-patch 2026-11-04: this model uses grouped-query attention (40 query heads vs 8
+        # key/value heads); flash-attn handles that natively, plain SDPA needs enable_gqa=True to
+        # broadcast the kv groups, else it errors on the head-count mismatch at dim 1.
+        out = _F.scaled_dot_product_attention(q, k, v, enable_gqa=True)
+        return out.transpose(1, 2)
 
 
 def _split_q_range_with_no_overlap(
@@ -818,13 +864,20 @@ def config_patch(compile_config: CompileConfig) -> CompileConfig:
     global is_base_model
     if is_base_model:
         is_base_model = False
+        # ghitza-patch 2026-11-04: on a 16GB card the fp8 DiT weights (~14.3GB) leave too little for
+        # the denoise activations -> OOM ("device not ready") mid-forward. Keep ~70% of base-model
+        # weights resident and stream the rest from CPU RAM (which has room), freeing VRAM for
+        # activations. MagiCompiler streams them per step (slower, but it fits).
+        compile_config.offload_config.gpu_resident_weight_ratio = 0.6
     else:
         # Fully offload SR model for memory-constrained GPU
         compile_config.offload_config.gpu_resident_weight_ratio = 0.0
     return compile_config
 
 
-@magi_compile(config_patch=config_patch)
+# ghitza-patch 2026-11-04: disable compilation under MAGI_DIT_SPLIT so layers can legally live on
+# two GPUs and the hidden state can cross the device boundary mid-forward (a compiled graph cannot).
+@magi_compile(config_patch=config_patch, enable_if=lambda: os.environ.get("MAGI_DIT_SPLIT") != "1")
 class TransformerBlock(torch.nn.Module):
     def __init__(self, model_config: Any):
         super().__init__()
@@ -843,7 +896,19 @@ class TransformerBlock(torch.nn.Module):
         modality_dispatcher: ModalityDispatcher,
         cp_split_sizes: List[int],
     ) -> torch.Tensor:
-        for _, layer in enumerate(self.layers):
+        # ghitza-patch 2026-11-04: pipeline-split support. When MAGI_DIT_SPLIT=1 the layers live on
+        # two GPUs; at the device boundary move the hidden state + the per-layer tensors across once.
+        # When not split (compiled path) _split is a constant False and dynamo folds this away.
+        _split = os.environ.get("MAGI_DIT_SPLIT") == "1"
+        for layer in self.layers:
+            if _split:
+                ldev = next(layer.parameters()).device
+                if x.device != ldev:
+                    x = x.to(ldev)
+                    rope = rope.to(ldev)
+                    permute_mapping = permute_mapping.to(ldev)
+                    inv_permute_mapping = inv_permute_mapping.to(ldev)
+                    modality_dispatcher.to_device(ldev)
             x = layer(
                 x,
                 rope,
@@ -907,6 +972,7 @@ class DiTModel(torch.nn.Module):
         varlen_handler: VarlenHandler,
         local_attn_handler: FFAHandler,
     ):
+        in_dev = x.device  # ghitza-patch: pipeline-split returns the result to the input device
         x = ulysses_scheduler().dispatch(x)
         coords_mapping = ulysses_scheduler().dispatch(coords_mapping)
         modality_mapping = ulysses_scheduler().dispatch(modality_mapping)
@@ -931,6 +997,11 @@ class DiTModel(torch.nn.Module):
             modality_dispatcher=modality_dispatcher,
             cp_split_sizes=cp_split_sizes,
         )
+        # ghitza-patch 2026-11-04: the block may have ended on the second GPU (pipeline split);
+        # re-home the output-side index tensors to x's device (no-op when not split).
+        inv_permute_mapping = inv_permute_mapping.to(x.device)
+        video_mask = video_mask.to(x.device)
+        audio_mask = audio_mask.to(x.device)
         x = ModalityDispatcher.inv_permute(x, inv_permute_mapping)
 
         x_video = x[video_mask].to(self.final_norm_video.weight.dtype)
@@ -947,4 +1018,4 @@ class DiTModel(torch.nn.Module):
         x_out[video_mask, : self.config.video_in_channels] = x_video
         x_out[audio_mask, : self.config.audio_in_channels] = x_audio
         x_out = ulysses_scheduler().undispatch(x_out)
-        return x_out
+        return x_out.to(in_dev)  # ghitza-patch: back to the input device for the scheduler
