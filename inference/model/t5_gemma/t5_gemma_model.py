@@ -19,7 +19,15 @@ class T5GemmaEncoder:
             is_encoder_decoder=False,
             dtype=weight_dtype,
         ).to(device)
-        self.model = CPUOffloadWrapper(model, is_cpu_offload=env_is_true("CPU_OFFLOAD") or get_arch_memory() <= 48)
+        # ghitza-patch 2026-11-04: on a cpu device, RUN on cpu (is_running_on_gpu=False). The 9B
+        # t5gemma is ~18GB and fits neither 16GB/12GB card; the default wrapper streams it to cuda:0
+        # at call time and OOMs. Running on cpu keeps it in RAM (fits); callers move the embedding
+        # to the DiT device.
+        self.model = CPUOffloadWrapper(
+            model,
+            is_cpu_offload=env_is_true("CPU_OFFLOAD") or get_arch_memory() <= 48,
+            is_running_on_gpu=(str(device) != "cpu"),
+        )
 
     def encode(self, prompt: str) -> torch.Tensor:
         inputs = self.tokenizer([prompt], return_tensors="pt").to(self.device)

@@ -179,6 +179,13 @@ class MagiEvaluator:
                 self.model = self.model.to(torch.device("cpu"))
                 self.sr_model = self.sr_model.to(torch.device("cpu"))
         self.device = device
+        # ghitza-patch 2026-11-04: second GPU (4070) hosts aux models (Wan2.2 VAE) so the fp8 DiT
+        # owns the 16GB card alone. Falls back to the single device when only one GPU is visible.
+        self.aux_device = "cuda:1" if torch.cuda.device_count() > 1 else device
+        # ghitza-patch 2026-11-04: under the DiT pipeline-split the 4070 (cuda:1) already holds the
+        # DiT's second half + the VAE, so put the audio encoder on the 5070 Ti (cuda:0) which has
+        # headroom. Without the split, keep it on the aux GPU as before.
+        self.audio_device = self.device if os.environ.get("MAGI_DIT_SPLIT") == "1" else self.aux_device
         self.config = config
         self.dtype = weight_dtype
         self.data_proxy = MagiDataProxy(config.data_proxy_config)
@@ -202,10 +209,21 @@ class MagiEvaluator:
 
         print_mem_info_rank_0("Begin init MagiEvaluator")
 
+        # ghitza-patch 2026-11-04: warm up the aux GPU's CUDA context before moving a module to it.
+        # After the big DiT load on cuda:0, the first module .to(cuda:1) tripped "device not ready";
+        # a sync + a tiny allocation on the aux device first clears it (same pattern as the DiT fix).
+        if str(self.aux_device) != str(self.device):
+            torch.cuda.synchronize()
+            _warm = torch.zeros(1, device=self.aux_device)
+            torch.cuda.synchronize(torch.device(self.aux_device).index)
+            del _warm
+
         vae_model_path = os.path.join(config.vae_model_path, "Wan2.2_VAE.pth")
-        self.vae: Wan2_2_VAE = CPUOffloadWrapper(
-            get_vae2_2(vae_model_path, self.device, weight_dtype=weight_dtype), is_cpu_offload=get_arch_memory() <= 48
-        )
+        # ghitza-patch 2026-11-04: place the VAE on the aux GPU (4070), unwrapped/resident, so it
+        # never co-resides with the fp8 DiT on the 16GB card. Latent handoffs are done explicitly
+        # in encode_image / decode_video. (The CPUOffloadWrapper hardcodes the current device, so
+        # it cannot target the aux GPU - that is why we skip it here.)
+        self.vae: Wan2_2_VAE = get_vae2_2(vae_model_path, self.aux_device, weight_dtype=weight_dtype)
         if config.use_turbo_vae:
             self.turbo_vae: TurboVAED = CPUOffloadWrapper(
                 get_turbo_vaed(config.student_config_path, config.student_ckpt_path, self.device, weight_dtype=weight_dtype),
@@ -215,7 +233,8 @@ class MagiEvaluator:
         print_mem_info_rank_0("After init video vae")
         print_rank_0(f"vae loaded from {vae_model_path}")
         self.video_processor = VideoProcessor(vae_scale_factor=16)
-        self.audio_vae = SAAudioFeatureExtractor(device=self.device, model_path=config.audio_model_path)
+        # ghitza-patch 2026-11-04: audio encoder on the aux GPU too (it OOM'd on the full cuda:0).
+        self.audio_vae = SAAudioFeatureExtractor(device=self.audio_device, model_path=config.audio_model_path)
         self.sigmas = ZeroSNRDDPMDiscretization()(1000, do_append_zero=False, flip=True)
         print_mem_info_rank_0("After init audio vae")
 
@@ -233,6 +252,7 @@ class MagiEvaluator:
             self.dtype,
             config.t5_gemma_target_length,
         )
+        self.context_null = self.context_null.to(self.device)  # ghitza-patch: t5gemma runs on cpu -> move to DiT device
         print_mem_info_rank_0("After init t5 gamma")
 
     def forward(self, eval_input: EvalInput, use_sr_model: bool = False):
@@ -270,7 +290,7 @@ class MagiEvaluator:
         # init latent
         if audio_path is not None:
             latent_audio = load_audio_and_encode(self.audio_vae, audio_path, seconds)
-            latent_audio = latent_audio.permute(0, 2, 1)
+            latent_audio = latent_audio.to(self.device).permute(0, 2, 1)  # ghitza-patch: audio enc on aux -> back to DiT device
             num_frames = latent_audio.shape[1]
             is_a2v = True
             print_rank_0(f"Using provided audio, latent_audio: {latent_audio.shape}")
@@ -285,8 +305,13 @@ class MagiEvaluator:
         )
 
         context, original_context_len = get_padded_t5_gemma_embedding(
-            prompt, self.txt_model_path, self.device, self.dtype, self.config.t5_gemma_target_length
+            prompt,
+            self.txt_model_path,
+            "cpu" if get_arch_memory() <= 48 else self.device,  # ghitza-patch: 18GB t5gemma off the DiT card
+            self.dtype,
+            self.config.t5_gemma_target_length,
         )
+        context = context.to(self.device)  # ghitza-patch: t5gemma runs on cpu -> move to DiT device
 
         event_path_timer().synced_record("Step2: Encode Image for Basic Resolution")
         if image is not None:
@@ -482,16 +507,16 @@ class MagiEvaluator:
         image = load_image(image)
         image = resizecrop(image, height, width)
         image = self.video_processor.preprocess(image, height=height, width=width)
-        image = image.to(device=self.device, dtype=self.dtype).unsqueeze(2)
+        image = image.to(device=self.aux_device, dtype=self.dtype).unsqueeze(2)
         image = self.vae.encode(image).to(torch.float32)
-        return image
+        return image.to(self.device)  # ghitza-patch: VAE on aux GPU -> move latent back to DiT device
 
     def decode_video(self, latent: torch.Tensor, group: torch.distributed.ProcessGroup = None):
         if self.config.use_turbo_vae:
             is_memory_limited = env_is_true("CPU_OFFLOAD") and env_is_true("SR2_1080")
             videos = self.turbo_vae.decode(latent.to(self.dtype), output_offload=is_memory_limited).float()
         else:
-            videos = self.vae.decode(latent.squeeze(0).to(self.dtype), group=group)
+            videos = self.vae.decode(latent.squeeze(0).to(self.dtype).to(self.aux_device), group=group)  # ghitza-patch: VAE on aux GPU
         if videos is None:
             return None
         videos.mul_(0.5).add_(0.5).clamp_(0, 1)
@@ -511,7 +536,7 @@ class MagiEvaluator:
             video_np = videos_np[0]
 
             latent_audio = latent_audio.squeeze(0)
-            audio_output = self.audio_vae.decode(latent_audio.T)
+            audio_output = self.audio_vae.decode(latent_audio.T.to(self.audio_device))  # ghitza-patch: decode on the audio encoder's GPU
             audio_output_np = audio_output.squeeze(0).T.cpu().numpy()
             audio_output_np = resample_audio_sinc(audio_output_np, 441 / 512)
 
